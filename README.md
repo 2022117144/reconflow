@@ -27,7 +27,7 @@ httpx -version
 ## Install
 
 ```
-git clone https://github.com/nithishvelangg/reconflow.git
+git clone https://github.com/ErenYeager1836/reconflow.git
 cd reconflow
 ```
 
