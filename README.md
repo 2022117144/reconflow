@@ -41,6 +41,8 @@ python reconflow.py -d example.com
 | --- | --- |
 | `-d`, `--domain` | Target domain (required) |
 | `-o`, `--output` | Output folder (default: `output`) |
+| `--threads` | Number of threads for httpx probing (default: httpx default) |
+| `--timeout` | Timeout in seconds for httpx probing (default: httpx default) |
 
 ## Example output
 
@@ -69,7 +71,7 @@ report.md        summary report
 
 - [x] Wildcard DNS detection
 - [ ] Live progress display
-- [ ] `--threads` and `--timeout` options
+- [x] `--threads` and `--timeout` options
 - [ ] Screenshots of live hosts
 - [ ] JSON / HTML report output
 - [ ] Save results as they come in

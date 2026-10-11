@@ -65,10 +65,15 @@ def find_subdomains(domain, out_file):
     return subs
 
 
-def probe_hosts(subs_file, out_file):
+def probe_hosts(subs_file, out_file, threads=None, timeout=None):
     print("[*] Probing for live hosts (this can take a while on big targets)...")
-    result = run(["httpx", "-l", str(subs_file), "-silent",
-                  "-status-code", "-title", "-tech-detect"])
+    cmd = ["httpx", "-l", str(subs_file), "-silent",
+           "-status-code", "-title", "-tech-detect"]
+    if threads is not None:
+        cmd.extend(["-threads", str(threads)])
+    if timeout is not None:
+        cmd.extend(["-timeout", str(timeout)])
+    result = run(cmd)
     lines = [l for l in result.stdout.splitlines() if l.strip()]
     out_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"[+] {len(lines)} hosts are alive")
@@ -102,6 +107,10 @@ def main():
     parser.add_argument("-o", "--output", default="output", help="output folder (default: output)")
     parser.add_argument("--keep-wildcard", action="store_true",
                         help="warn about wildcard DNS but don't filter wildcard results")
+    parser.add_argument("--threads", type=int, default=None,
+                        help="number of threads for httpx probing (default: httpx default)")
+    parser.add_argument("--timeout", type=int, default=None,
+                        help="timeout in seconds for httpx probing (default: httpx default)")
     args = parser.parse_args()
 
     check_tools(["subfinder", "httpx"])
@@ -130,7 +139,8 @@ def main():
             print("[!] No subdomains left to probe.")
             live = []
         else:
-            live = probe_hosts(out_dir / "subdomains.txt", out_dir / "live.txt")
+            live = probe_hosts(out_dir / "subdomains.txt", out_dir / "live.txt",
+                               threads=args.threads, timeout=args.timeout)
         write_report(args.domain, subs, live, out_dir, wildcard_ips, dropped)
     except KeyboardInterrupt:
         sys.exit("\n[!] Interrupted. Partial results (if any) are in " + str(out_dir))
