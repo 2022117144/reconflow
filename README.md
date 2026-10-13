@@ -65,12 +65,11 @@ report.md        summary report
 ## Known limitations
 
 - **Wildcard DNS domains** return many fake "live" hosts that all point to the same server. reconflow detects them and filters the fake hosts (use `--keep-wildcard` to disable).
-- No progress display yet. Large targets can look frozen while httpx works.
 
 ## Roadmap
 
 - [x] Wildcard DNS detection
-- [ ] Live progress display
+- [x] Live progress display
 - [x] `--threads` and `--timeout` options
 - [ ] Screenshots of live hosts
 - [ ] JSON / HTML report output
