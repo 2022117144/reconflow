@@ -37,15 +37,33 @@ def resolve(host):
         return set()
 
 
-def detect_wildcard(domain, tries=3):
-    """Resolve random nonexistent names. If they resolve, the domain uses wildcard DNS.
+def detect_wildcard(domain, min_samples=5, max_samples=20, stable_rounds=3):
+    """Resolve random nonexistent names to detect wildcard DNS and rotating IP pools.
 
     Returns the set of wildcard IPs (empty set means no wildcard detected).
+    If a domain uses wildcard DNS with round-robin or rotating pools, continues
+    sampling until the IP set stabilizes or max_samples is reached.
     """
-    ips = set()
-    for _ in range(tries):
+    first_label = "".join(random.choices(string.ascii_lowercase + string.digits, k=14))
+    first_ips = resolve(f"{first_label}.{domain}")
+    if not first_ips:
+        return set()
+
+    ips = set(first_ips)
+    consecutive_stable = 0
+
+    for i in range(1, max_samples):
         label = "".join(random.choices(string.ascii_lowercase + string.digits, k=14))
-        ips |= resolve(f"{label}.{domain}")
+        resolved_ips = resolve(f"{label}.{domain}")
+        new_ips = resolved_ips - ips
+        if new_ips:
+            ips |= new_ips
+            consecutive_stable = 0
+        else:
+            consecutive_stable += 1
+            if i >= min_samples and consecutive_stable >= stable_rounds:
+                break
+
     return ips
 
 
