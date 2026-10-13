@@ -73,10 +73,21 @@ def probe_hosts(subs_file, out_file, threads=None, timeout=None):
         cmd.extend(["-threads", str(threads)])
     if timeout is not None:
         cmd.extend(["-timeout", str(timeout)])
-    result = run(cmd)
-    lines = [l for l in result.stdout.splitlines() if l.strip()]
-    out_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"[+] {len(lines)} hosts are alive")
+
+    lines = []
+    with subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace"
+    ) as proc:
+        for line in proc.stdout:
+            stripped = line.strip()
+            if stripped:
+                lines.append(stripped)
+                print(f"[*] [{len(lines)} alive] {stripped}")
+        proc.wait()
+
+    out_file.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    print(f"[+] Probing complete: {len(lines)} hosts are alive")
     return lines
 
 
