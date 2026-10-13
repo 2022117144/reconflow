@@ -138,7 +138,26 @@ def probe_hosts(subs_file, out_file, threads=None, timeout=None, json_report=Fal
     return lines, (hosts_data if json_report else None)
 
 
-def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0, hosts_data=None):
+def capture_screenshots(live_hosts, screenshots_dir):
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+    urls = [line.split()[0] for line in live_hosts if line.strip()]
+    if not urls:
+        return []
+    print("[*] Capturing screenshots of live hosts with gowitness...")
+    urls_file = screenshots_dir / ".targets.txt"
+    urls_file.write_text("\n".join(urls) + "\n", encoding="utf-8")
+    cmd = ["gowitness", "scan", "file", "-f", str(urls_file), "--screenshot-path", str(screenshots_dir)]
+    run(cmd)
+    try:
+        urls_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+    images = sorted(p.name for p in screenshots_dir.glob("*.png"))
+    print(f"[+] Captured {len(images)} screenshots in {screenshots_dir}")
+    return images
+
+
+def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0, hosts_data=None, screenshots=None):
     report = out_dir / "report.md"
     warning = ""
     if wildcard_ips:
@@ -146,13 +165,17 @@ def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0, host
             f"> **Wildcard DNS detected** (resolves to {', '.join(sorted(wildcard_ips))}). "
             f"{dropped} subdomains that only pointed there were filtered out.\n\n"
         )
+    screenshot_section = ""
+    if screenshots:
+        screenshot_section = f"## Screenshots\n\nCaptured {len(screenshots)} screenshot(s) in `screenshots/`.\n\n"
     report.write_text(
         f"# reconflow report: {domain}\n\n"
         f"Generated: {datetime.now():%Y-%m-%d %H:%M}\n\n"
         f"{warning}"
         f"- Subdomains found: {len(subs)}\n"
         f"- Live hosts: {len(live)}\n\n"
-        f"## Live hosts\n\n```\n" + "\n".join(live) + "\n```\n",
+        f"## Live hosts\n\n```\n" + "\n".join(live) + "\n```\n\n"
+        f"{screenshot_section}",
         encoding="utf-8",
     )
     print(f"[+] Report saved to {report}")
@@ -167,6 +190,7 @@ def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0, host
             "wildcard_detected": bool(wildcard_ips),
             "wildcard_ips": sorted(wildcard_ips) if wildcard_ips else [],
             "wildcard_filtered_count": dropped,
+            "screenshots_count": len(screenshots) if screenshots else 0,
             "live_hosts": hosts_data,
         }
         json_report_path.write_text(json.dumps(report_dict, indent=2) + "\n", encoding="utf-8")
@@ -186,9 +210,14 @@ def main():
                         help="timeout in seconds for httpx probing (default: httpx default)")
     parser.add_argument("--json", action="store_true", dest="json_report",
                         help="also write results to report.json")
+    parser.add_argument("--screenshots", action="store_true",
+                        help="capture screenshots of live hosts using gowitness")
     args = parser.parse_args()
 
-    check_tools(["subfinder", "httpx"])
+    required_tools = ["subfinder", "httpx"]
+    if args.screenshots:
+        required_tools.append("gowitness")
+    check_tools(required_tools)
 
     out_dir = Path(args.output) / args.domain
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -210,6 +239,7 @@ def main():
                 (out_dir / "subdomains.txt").write_text(
                     "\n".join(subs) + ("\n" if subs else ""), encoding="utf-8")
 
+        screenshots = []
         if not subs:
             print("[!] No subdomains left to probe.")
             live = []
@@ -218,7 +248,10 @@ def main():
             live, hosts_data = probe_hosts(out_dir / "subdomains.txt", out_dir / "live.txt",
                                            threads=args.threads, timeout=args.timeout,
                                            json_report=args.json_report)
-        write_report(args.domain, subs, live, out_dir, wildcard_ips, dropped, hosts_data)
+            if args.screenshots and live:
+                screenshots = capture_screenshots(live, out_dir / "screenshots")
+
+        write_report(args.domain, subs, live, out_dir, wildcard_ips, dropped, hosts_data, screenshots)
     except KeyboardInterrupt:
         sys.exit("\n[!] Interrupted. Partial results (if any) are in " + str(out_dir))
 
