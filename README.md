@@ -43,6 +43,7 @@ python reconflow.py -d example.com
 | `-o`, `--output` | Output folder (default: `output`) |
 | `--threads` | Number of threads for httpx probing (default: httpx default) |
 | `--timeout` | Timeout in seconds for httpx probing (default: httpx default) |
+| `--json` | Also write results to `report.json` |
 
 ## Example output
 
@@ -60,6 +61,7 @@ Files created in `output/<domain>/`:
 subdomains.txt   all discovered subdomains
 live.txt         live hosts with status code, title, tech
 report.md        summary report
+report.json      structured JSON report (when using --json)
 ```
 
 ## Known limitations
@@ -71,8 +73,8 @@ report.md        summary report
 - [x] Wildcard DNS detection
 - [x] Live progress display
 - [x] `--threads` and `--timeout` options
+- [x] JSON report output
 - [ ] Screenshots of live hosts
-- [ ] JSON / HTML report output
 - [ ] Save results as they come in
 
 ## Contributing

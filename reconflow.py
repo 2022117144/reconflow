@@ -2,6 +2,7 @@
 """reconflow - chain subdomain discovery and live host probing."""
 
 import argparse
+import json
 import random
 import shutil
 import socket
@@ -65,33 +66,61 @@ def find_subdomains(domain, out_file):
     return subs
 
 
-def probe_hosts(subs_file, out_file, threads=None, timeout=None):
+def probe_hosts(subs_file, out_file, threads=None, timeout=None, json_report=False):
     print("[*] Probing for live hosts (this can take a while on big targets)...")
     cmd = ["httpx", "-l", str(subs_file), "-silent",
            "-status-code", "-title", "-tech-detect"]
+    if json_report:
+        cmd.append("-json")
     if threads is not None:
         cmd.extend(["-threads", str(threads)])
     if timeout is not None:
         cmd.extend(["-timeout", str(timeout)])
 
     lines = []
+    hosts_data = []
     with subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace"
     ) as proc:
         for line in proc.stdout:
             stripped = line.strip()
-            if stripped:
+            if not stripped:
+                continue
+            if json_report:
+                try:
+                    data = json.loads(stripped)
+                    url = data.get("url") or ""
+                    code = data.get("status_code", data.get("status-code", 0))
+                    title = data.get("title", "")
+                    tech = data.get("tech") or data.get("technologies") or []
+                    hosts_data.append({
+                        "url": url,
+                        "status_code": code,
+                        "title": title,
+                        "technologies": tech,
+                    })
+                    display = f"{url} [{code}]"
+                    if title:
+                        display += f" [{title}]"
+                    if tech:
+                        display += f" [{', '.join(tech) if isinstance(tech, list) else tech}]"
+                    lines.append(display)
+                    print(f"[*] [{len(lines)} alive] {display}")
+                except json.JSONDecodeError:
+                    lines.append(stripped)
+                    print(f"[*] [{len(lines)} alive] {stripped}")
+            else:
                 lines.append(stripped)
                 print(f"[*] [{len(lines)} alive] {stripped}")
         proc.wait()
 
     out_file.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     print(f"[+] Probing complete: {len(lines)} hosts are alive")
-    return lines
+    return lines, (hosts_data if json_report else None)
 
 
-def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0):
+def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0, hosts_data=None):
     report = out_dir / "report.md"
     warning = ""
     if wildcard_ips:
@@ -110,6 +139,21 @@ def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0):
     )
     print(f"[+] Report saved to {report}")
 
+    if hosts_data is not None:
+        json_report_path = out_dir / "report.json"
+        report_dict = {
+            "domain": domain,
+            "generated": datetime.now().isoformat(),
+            "subdomains_count": len(subs),
+            "live_count": len(live),
+            "wildcard_detected": bool(wildcard_ips),
+            "wildcard_ips": sorted(wildcard_ips) if wildcard_ips else [],
+            "wildcard_filtered_count": dropped,
+            "live_hosts": hosts_data,
+        }
+        json_report_path.write_text(json.dumps(report_dict, indent=2) + "\n", encoding="utf-8")
+        print(f"[+] JSON report saved to {json_report_path}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -122,6 +166,8 @@ def main():
                         help="number of threads for httpx probing (default: httpx default)")
     parser.add_argument("--timeout", type=int, default=None,
                         help="timeout in seconds for httpx probing (default: httpx default)")
+    parser.add_argument("--json", action="store_true", dest="json_report",
+                        help="also write results to report.json")
     args = parser.parse_args()
 
     check_tools(["subfinder", "httpx"])
@@ -149,10 +195,12 @@ def main():
         if not subs:
             print("[!] No subdomains left to probe.")
             live = []
+            hosts_data = [] if args.json_report else None
         else:
-            live = probe_hosts(out_dir / "subdomains.txt", out_dir / "live.txt",
-                               threads=args.threads, timeout=args.timeout)
-        write_report(args.domain, subs, live, out_dir, wildcard_ips, dropped)
+            live, hosts_data = probe_hosts(out_dir / "subdomains.txt", out_dir / "live.txt",
+                                           threads=args.threads, timeout=args.timeout,
+                                           json_report=args.json_report)
+        write_report(args.domain, subs, live, out_dir, wildcard_ips, dropped, hosts_data)
     except KeyboardInterrupt:
         sys.exit("\n[!] Interrupted. Partial results (if any) are in " + str(out_dir))
 
