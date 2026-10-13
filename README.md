@@ -16,6 +16,7 @@ Subdomain discovery and live host probing in **one command**.
 
 - Python 3.8+ (no extra Python packages needed)
 - [`subfinder`](https://github.com/projectdiscovery/subfinder/releases) and [`httpx`](https://github.com/projectdiscovery/httpx/releases) (ProjectDiscovery's versions) available on your `PATH`
+- [`gowitness`](https://github.com/sensepost/gowitness/releases) (optional, only required if using `--screenshots`)
 
 Check they work:
 
@@ -44,6 +45,7 @@ python reconflow.py -d example.com
 | `--threads` | Number of threads for httpx probing (default: httpx default) |
 | `--timeout` | Timeout in seconds for httpx probing (default: httpx default) |
 | `--json` | Also write results to `report.json` |
+| `--screenshots` | Capture screenshots of live hosts (requires gowitness) |
 
 ## Example output
 
@@ -62,6 +64,7 @@ subdomains.txt   all discovered subdomains
 live.txt         live hosts with status code, title, tech
 report.md        summary report
 report.json      structured JSON report (when using --json)
+screenshots/     captured screenshots of live hosts (when using --screenshots)
 ```
 
 ## Known limitations
@@ -74,7 +77,7 @@ report.json      structured JSON report (when using --json)
 - [x] Live progress display
 - [x] `--threads` and `--timeout` options
 - [x] JSON report output
-- [ ] Screenshots of live hosts
+- [x] Screenshots of live hosts
 - [ ] Save results as they come in
 
 ## Contributing
