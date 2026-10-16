@@ -8,7 +8,7 @@ Subdomain discovery, live host probing, port scanning, historical URLs, vulnerab
 
 ## What it does
 
-1. Finds subdomains of a target (`subfinder`)
+1. Finds subdomains of a target (`subfinder` + Certificate Transparency `crt.sh`)
 2. Probes which ones are alive and records status code, title and technologies (`httpx`)
 3. Port scans live hosts (`naabu`)
 4. Collects historical URLs and extracts unique query parameters (`gau`)
@@ -19,9 +19,14 @@ Subdomain discovery, live host probing, port scanning, historical URLs, vulnerab
 9. Maps network ASN and IP CIDR ranges via public RDAP
 10. Audits HTTP response headers and permissive CORS policies
 11. Inspects DNS CNAME records for external cloud service dependencies
-12. Streams progress to disk so interrupted scans can be safely resumed (`--resume`)
-13. Generates summary reports (`report.md`, `report.json`, and severity-colored `report.html`)
-14. Posts completion alerts to Discord or Slack webhooks
+12. Audits live hosts for exposed sensitive files (`.git`, `.env`, API docs, actuator)
+13. Fingerprints Web Application Firewalls (Cloudflare, CloudFront, Akamai, Imperva)
+14. Harvests routes from `/robots.txt` and `/sitemap.xml`
+15. Audits domain email spoofing protections (SPF and DMARC via DoH)
+16. Tracks differential recon changes across runs (`--diff`)
+17. Streams progress to disk so interrupted scans can be safely resumed (`--resume`)
+18. Generates summary reports (`report.md`, `report.json`, and severity-colored `report.html`)
+19. Posts completion alerts to Discord or Slack webhooks
 
 ## Requirements
 
@@ -88,12 +93,18 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `--secrets` | Scan discovered JS files for leaked API keys / tokens / JWTs |
 | `--fuzz` | Fuzz endpoints and portals on live hosts with ffuf |
 | `--wordlist` | Custom wordlist path for ffuf (default: built-in common list) |
-| `--audit` | Run all defensive asset audits (cloud, ASN, headers, CNAME) |
+| `--audit` | Run all defensive asset audits (cloud, ASN, headers, CNAME, sensitive, WAF, email) |
 | `--cloud-assets` | Detect cloud storage bucket references in discovered URLs and hosts |
 | `--asn` | Map network ASN and IP ranges for live hosts via RDAP |
 | `--headers` | Audit HTTP security headers and CORS configurations |
 | `--cname-check` | Audit DNS CNAME records for external cloud service dependencies |
-| `--full` | Shortcut for all discovery stages, audits, and HTML report |
+| `--ct-logs` | Harvest subdomains from public Certificate Transparency logs (`crt.sh`) |
+| `--sensitive-files` | Audit live hosts for exposed sensitive files (`.git`, `.env`, API docs) |
+| `--waf` | Fingerprint Web Application Firewalls (Cloudflare, AWS, Akamai, etc.) |
+| `--sitemap` | Harvest routes from `/robots.txt` and `/sitemap.xml` across live hosts |
+| `--email-security` | Audit domain SPF and DMARC DNS policies for email spoofing |
+| `--diff` | Highlight new subdomains, live hosts, and newly opened ports vs previous run |
+| `--full` | Shortcut for all discovery stages, audits, CT logs, diff, and HTML report |
 | `--html` | Also build a severity-colored HTML report (`report.html`) |
 | `--notify URL` | Post a run summary to a Discord/Slack-compatible webhook on finish |
 
@@ -148,23 +159,31 @@ notify:
 Files created in `output/<domain>/`:
 
 ```
-state.json         run progress and metadata (enables --resume)
-subdomains.txt     all discovered subdomains
-live.txt           live hosts with status code, title, tech
-urls.txt           collected URLs (when using --urls or --full)
-params.txt         unique query parameters (when using --urls or --full)
-ports.json         open port mappings (when using --ports or --full)
-vulns.json         nuclei vulnerability findings (when using --vuln or --full)
-secrets.json       extracted secret matches (when using --secrets or --full)
-fuzz.json          discovered endpoint paths (when using --fuzz or --full)
-cloud_assets.json  discovered cloud storage bucket endpoints (when using --audit)
-asn_ranges.json    network ASN & IP ranges mapped via RDAP (when using --audit)
-headers_audit.json HTTP security headers & CORS audit (when using --audit)
-cname_audit.json   external service CNAME records (when using --audit)
-report.md          summary Markdown report
-report.json        structured JSON report (when using --json)
-report.html        severity-colored HTML dashboard (when using --html or --full)
-screenshots/       captured screenshots of live hosts (when using --screenshots)
+state.json           run progress and metadata (enables --resume)
+previous_run.json    snapshot baseline for differential change detection
+subdomains.txt       all discovered subdomains (subfinder + CT logs)
+ct_subdomains.txt    subdomains discovered from Certificate Transparency logs
+live.txt             live hosts with status code, title, tech
+urls.txt             collected URLs (when using --urls or --full)
+params.txt           unique query parameters (when using --urls or --full)
+ports.json           open port mappings (when using --ports or --full)
+vulns.json           nuclei vulnerability findings (when using --vuln or --full)
+secrets.json         extracted secret matches (when using --secrets or --full)
+fuzz.json            discovered endpoint paths (when using --fuzz or --full)
+cloud_assets.json    discovered cloud storage bucket endpoints (when using --audit)
+asn_ranges.json      network ASN & IP ranges mapped via RDAP (when using --audit)
+headers_audit.json   HTTP security headers & CORS audit (when using --audit)
+cname_audit.json     external service CNAME records (when using --audit)
+sensitive_files.json exposed sensitive files & dev artifacts (when using --audit)
+waf_detection.json   WAF/CDN reverse proxy fingerprinting (when using --audit)
+sitemap_routes.json  extracted routes from robots.txt and sitemaps (when using --audit)
+discovered_routes.txt plain list of all harvested unique paths
+email_security.json  SPF and DMARC spoofing policy audit (when using --audit)
+diff.json            new & removed subdomains, live hosts, and ports (when using --diff)
+report.md            summary Markdown report
+report.json          structured JSON report (when using --json)
+report.html          severity-colored HTML dashboard with diff alerts
+screenshots/         captured screenshots of live hosts (when using --screenshots)
 ```
 
 ## Known limitations
@@ -192,6 +211,12 @@ screenshots/       captured screenshots of live hosts (when using --screenshots)
 - [x] Network ASN and IP range mapping via RDAP
 - [x] HTTP security header and CORS configuration audits
 - [x] DNS CNAME external service provider validation
+- [x] Certificate Transparency (CT) log harvesting (`crt.sh`)
+- [x] Exposed sensitive files & dev artifact auditing
+- [x] Web Application Firewall (WAF) & CDN fingerprinting
+- [x] Robots.txt and sitemap route harvesting
+- [x] Email security & DNS governance (SPF / DMARC)
+- [x] Differential recon & change tracking (`--diff`)
 
 ## Contributing
 

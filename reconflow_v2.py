@@ -118,6 +118,18 @@ def main():
                     help="audit HTTP security headers and CORS configurations")
     ap.add_argument("--cname-check", action="store_true",
                     help="audit DNS CNAME records for external cloud service dependencies")
+    ap.add_argument("--ct-logs", action="store_true",
+                    help="harvest subdomains from Certificate Transparency logs (crt.sh)")
+    ap.add_argument("--sensitive-files", action="store_true",
+                    help="audit live hosts for exposed sensitive files and dev artifacts")
+    ap.add_argument("--waf", action="store_true",
+                    help="fingerprint Web Application Firewalls (WAF) & reverse proxies")
+    ap.add_argument("--sitemap", action="store_true",
+                    help="harvest routes from /robots.txt and /sitemap.xml across live hosts")
+    ap.add_argument("--email-security", action="store_true",
+                    help="audit domain SPF and DMARC DNS policies for spoofing vulnerabilities")
+    ap.add_argument("--diff", action="store_true",
+                    help="compute differential changes against previous scan baseline")
     ap.add_argument("--full", action="store_true",
                     help="shortcut for all discovery stages, audits, and HTML report")
     ap.add_argument("--html", action="store_true", help="also build an HTML report")
@@ -145,9 +157,12 @@ def main():
     if args.full:
         args.ports = args.urls = args.vuln = args.secrets = args.fuzz = args.html = True
         args.audit = True
+        args.ct_logs = True
+        args.diff = True
 
     if args.audit:
         args.cloud_assets = args.asn = args.headers = args.cname_check = True
+        args.sensitive_files = args.waf = args.email_security = args.sitemap = True
 
     output_dir = Path(args.output) / args.domain
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -161,6 +176,11 @@ def main():
                       .read_text(encoding="utf-8").splitlines() if line.strip()]
     else:
         subdomains = run_subfinder(args.domain, output_dir)
+        if args.ct_logs:
+            ct_subs = audits.fetch_ct_subdomains(args.domain, output_dir)
+            subdomains = sorted(list(set(subdomains) | set(ct_subs)))
+            (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
+            print(f"[+] Combined total: {len(subdomains)} unique subdomains")
         sm.mark_completed("subdomains", {"count": len(subdomains)})
 
     # Stage 2: Live Hosts
@@ -178,6 +198,8 @@ def main():
     vuln_findings, secret_findings, fuzz_findings = [], [], []
     cloud_findings, asn_findings = [], {}
     header_findings, cname_findings = [], []
+    sensitive_findings, waf_findings = [], []
+    email_security, sitemap_routes, diff_data = {}, {}, {}
 
     # Stage 3: Port Scan
     if args.ports and live_hosts:
@@ -315,6 +337,73 @@ def main():
             cname_findings = audits.audit_cname_records(subdomains, output_dir)
             sm.mark_completed("cname", {"flagged_count": len(cname_findings)})
 
+    # Stage 13: Exposed Sensitive Files & Dev Artifacts
+    if args.sensitive_files and live_hosts:
+        if sm.is_completed("sensitive_files") and (output_dir / "sensitive_files.json").exists():
+            print(f"[*] Resuming: loading sensitive files from "
+                  f"{output_dir / 'sensitive_files.json'}")
+            try:
+                sensitive_findings = json.loads(
+                    (output_dir / "sensitive_files.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                sensitive_findings = audits.audit_sensitive_files(live_hosts, output_dir)
+        else:
+            sensitive_findings = audits.audit_sensitive_files(live_hosts, output_dir)
+            sm.mark_completed("sensitive_files", {"findings": len(sensitive_findings)})
+
+    # Stage 14: WAF & Reverse Proxy Detection
+    if args.waf and live_hosts:
+        if sm.is_completed("waf") and (output_dir / "waf_detection.json").exists():
+            print(f"[*] Resuming: loading WAF detection from {output_dir / 'waf_detection.json'}")
+            try:
+                waf_findings = json.loads(
+                    (output_dir / "waf_detection.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                waf_findings = audits.detect_waf(live_hosts, output_dir)
+        else:
+            waf_findings = audits.detect_waf(live_hosts, output_dir)
+            sm.mark_completed("waf", {"fingerprinted": len(waf_findings)})
+
+    # Stage 15: Robots.txt & Sitemap Harvesting
+    if args.sitemap and live_hosts:
+        if sm.is_completed("sitemap") and (output_dir / "sitemap_routes.json").exists():
+            print(f"[*] Resuming: loading sitemap routes from {output_dir / 'sitemap_routes.json'}")
+            try:
+                sitemap_routes = json.loads(
+                    (output_dir / "sitemap_routes.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                sitemap_routes = audits.harvest_sitemaps(live_hosts, output_dir)
+        else:
+            sitemap_routes = audits.harvest_sitemaps(live_hosts, output_dir)
+            sm.mark_completed("sitemap", {"hosts": len(sitemap_routes)})
+
+    # Stage 16: Email Security & DNS Governance
+    if args.email_security:
+        if sm.is_completed("email_sec") and (output_dir / "email_security.json").exists():
+            print(f"[*] Resuming: loading email security from "
+                  f"{output_dir / 'email_security.json'}")
+            try:
+                email_security = json.loads(
+                    (output_dir / "email_security.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                email_security = audits.audit_email_security(args.domain, output_dir)
+        else:
+            email_security = audits.audit_email_security(args.domain, output_dir)
+            sm.mark_completed("email_sec", {
+                "spf": email_security.get("spf", {}).get("status"),
+                "dmarc": email_security.get("dmarc", {}).get("policy"),
+            })
+
+    # Stage 17: Differential Recon Change Detection
+    if args.diff:
+        diff_data = audits.compute_differential(
+            output_dir, args.domain, subdomains, live_hosts, ports_by_host
+        )
+
     extra_md = []
     if ports_by_host:
         extra_md.append(f"- Hosts with open ports: **{len(ports_by_host)}**")
@@ -334,6 +423,20 @@ def main():
         extra_md.append(f"- Audited HTTP endpoints: **{len(header_findings)}**")
     if cname_findings:
         extra_md.append(f"- External service CNAMEs: **{len(cname_findings)}**")
+    if sensitive_findings:
+        extra_md.append(f"- Exposed sensitive files: **{len(sensitive_findings)}**")
+    if waf_findings:
+        protected = sum(1 for w in waf_findings if w.get("protected"))
+        extra_md.append(f"- WAF / CDN protected hosts: **{protected}/{len(waf_findings)}**")
+    if email_security:
+        spf_st = email_security.get("spf", {}).get("status", "N/A")
+        dmarc_pol = email_security.get("dmarc", {}).get("policy", "N/A")
+        extra_md.append(f"- Email Security: SPF (**{spf_st}**), DMARC (**{dmarc_pol}**)")
+    if diff_data and diff_data.get("has_baseline"):
+        extra_md.append(
+            f"- Differential changes: **+{len(diff_data.get('new_subdomains', []))}** new subs, "
+            f"**+{len(diff_data.get('new_live_hosts', []))}** new live"
+        )
 
     build_markdown_report(args.domain, output_dir, subdomains, live_hosts, extra_md)
 
@@ -352,6 +455,11 @@ def main():
             "asn_ranges": asn_findings,
             "headers_audit": header_findings,
             "cname_audit": cname_findings,
+            "sensitive_files": sensitive_findings,
+            "waf_detection": waf_findings,
+            "sitemap_routes": sitemap_routes,
+            "email_security": email_security,
+            "differential": diff_data,
         }, indent=2), encoding="utf-8")
 
     if args.html:
@@ -365,6 +473,11 @@ def main():
             param_count=len(params),
             cloud_findings=cloud_findings,
             cname_findings=cname_findings,
+            sensitive_findings=sensitive_findings,
+            waf_findings=waf_findings,
+            email_security=email_security,
+            diff_data=diff_data,
+            route_count=len(sitemap_routes),
         )
 
     if args.notify:
@@ -379,6 +492,10 @@ def main():
             stats_dict["Cloud assets"] = len(cloud_findings)
         if cname_findings:
             stats_dict["Service CNAMEs"] = len(cname_findings)
+        if sensitive_findings:
+            stats_dict["Sensitive files"] = len(sensitive_findings)
+        if diff_data and diff_data.get("new_subdomains"):
+            stats_dict["New subdomains"] = len(diff_data["new_subdomains"])
         notify.send_webhook(args.notify, args.domain, stats_dict)
 
     print(f"[+] Report saved to {output_dir / 'report.md'}")
