@@ -105,7 +105,7 @@ def main():
                     help="collect historical URLs + params with gau")
     ap.add_argument("--vuln", action="store_true", help="run nuclei against live hosts")
     ap.add_argument("--severity", default="medium,high,critical",
-                     help="nuclei severity filter (comma-separated)")
+                    help="nuclei severity filter (comma-separated)")
     ap.add_argument("--secrets", action="store_true", help="scan JS files for leaked secrets")
     ap.add_argument("--full", action="store_true",
                     help="shortcut for --ports --urls --vuln --secrets --html")

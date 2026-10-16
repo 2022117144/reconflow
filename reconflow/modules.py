@@ -162,6 +162,6 @@ def secret_scan(urls, output_dir: Path, timeout: int = 8):
 
     out_file = output_dir / "secrets.json"
     out_file.write_text(json.dumps(findings, indent=2), encoding="utf-8")
-    print(f"[+] Found {len(findings)} potential secret(s)" +
-          (" — review secrets.json" if findings else ""))
+    suffix = " — review secrets.json" if findings else ""
+    print(f"[+] Found {len(findings)} potential secret(s){suffix}")
     return findings
