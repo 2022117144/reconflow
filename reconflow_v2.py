@@ -19,7 +19,18 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from reconflow import audits, config, modules, notify, report, state
+from reconflow import (
+    audits,
+    config,
+    cve_correlate,
+    github_leaks,
+    modules,
+    notify,
+    report,
+    scope,
+    state,
+    takeover,
+)
 
 
 def run_subfinder(domain: str, output_dir: Path):
@@ -118,6 +129,17 @@ def main():
                     help="audit HTTP security headers and CORS configurations")
     ap.add_argument("--cname-check", action="store_true",
                     help="audit DNS CNAME records for external cloud service dependencies")
+    ap.add_argument("--takeover", action="store_true",
+                    help="confirm subdomain takeovers via HTTP fingerprint "
+                         "(requires --cname-check)")
+    ap.add_argument("--scope", metavar="FILE",
+                    help="HackerOne/Bugcrowd scope file to filter discovered subdomains against")
+    ap.add_argument("--github-leaks", action="store_true",
+                    help="search public GitHub code for leaked references to the domain")
+    ap.add_argument("--github-token", metavar="TOKEN",
+                    help="GitHub PAT for --github-leaks (required, GitHub code search needs auth)")
+    ap.add_argument("--cve-correlate", action="store_true",
+                    help="cross-reference httpx-detected tech versions against NVD CVEs")
     ap.add_argument("--ct-logs", action="store_true",
                     help="harvest subdomains from Certificate Transparency logs (crt.sh)")
     ap.add_argument("--sensitive-files", action="store_true",
@@ -170,6 +192,8 @@ def main():
         args.ct_logs = True
         args.alterations = True
         args.diff = True
+        args.cname_check = True
+        args.takeover = True
 
     if args.audit:
         args.cloud_assets = args.asn = args.headers = args.cname_check = True
@@ -181,6 +205,25 @@ def main():
 
     sm = state.StateManager(output_dir, args.domain, resume=args.resume)
 
+    leak_findings = []
+    # Stage: GitHub Public Code Leak Search
+    if args.github_leaks:
+        if sm.is_completed("github_leaks") and (output_dir / "github_leaks.json").exists():
+            print(f"[*] Resuming: loading GitHub leaks from {output_dir / 'github_leaks.json'}")
+            try:
+                leak_findings = json.loads(
+                    (output_dir / "github_leaks.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                leak_findings = github_leaks.search_github_leaks(
+                    args.domain, output_dir, args.github_token
+                )
+        else:
+            leak_findings = github_leaks.search_github_leaks(
+                args.domain, output_dir, args.github_token
+            )
+            sm.mark_completed("github_leaks", {"found": len(leak_findings)})
+
     permutation_results = []
 
     # Stage 1: Subdomains
@@ -188,8 +231,14 @@ def main():
         print(f"[*] Resuming: loading subdomains from {output_dir / 'subdomains.txt'}")
         subdomains = [line.strip() for line in (output_dir / "subdomains.txt")
                       .read_text(encoding="utf-8").splitlines() if line.strip()]
+        if args.scope:
+            scope_data = scope.load_scope(args.scope)
+            subdomains, _ = scope.filter_in_scope(subdomains, scope_data, output_dir)
     else:
         subdomains = run_subfinder(args.domain, output_dir)
+        if args.scope:
+            scope_data = scope.load_scope(args.scope)
+            subdomains, _ = scope.filter_in_scope(subdomains, scope_data, output_dir)
         if args.ct_logs:
             ct_subs = audits.fetch_ct_subdomains(args.domain, output_dir)
             subdomains = sorted(list(set(subdomains) | set(ct_subs)))
@@ -202,17 +251,35 @@ def main():
             subdomains = sorted(list(set(subdomains) | set(permutation_results)))
             (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
             print(f"[+] Post-permutations total: {len(subdomains)} unique subdomains")
+        if args.scope and (args.ct_logs or args.alterations):
+            scope_data = scope.load_scope(args.scope)
+            subdomains, _ = scope.filter_in_scope(subdomains, scope_data, output_dir)
+            (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
         sm.mark_completed("subdomains", {"count": len(subdomains)})
 
+    httpx_records = []
     # Stage 2: Live Hosts
     if sm.is_completed("live_hosts") and (output_dir / "live.txt").exists():
         print(f"[*] Resuming: loading live hosts from {output_dir / 'live.txt'}")
         live_hosts = [line.strip() for line in (output_dir / "live.txt")
                       .read_text(encoding="utf-8").splitlines() if line.strip()]
+        if (output_dir / "httpx_records.json").exists():
+            try:
+                httpx_records = json.loads(
+                    (output_dir / "httpx_records.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                pass
     else:
-        live_hosts, _ = run_httpx(
+        live_hosts, httpx_records = run_httpx(
             subdomains, output_dir, args.threads, args.timeout, args.keep_wildcard
         )
+        try:
+            (output_dir / "httpx_records.json").write_text(
+                json.dumps(httpx_records, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
         sm.mark_completed("live_hosts", {"count": len(live_hosts)})
 
     ports_by_host, urls, params = {}, [], []
@@ -360,6 +427,25 @@ def main():
             cname_findings = audits.audit_cname_records(subdomains, output_dir)
             sm.mark_completed("cname", {"flagged_count": len(cname_findings)})
 
+    takeover_findings = []
+    # Stage: Confirmed Subdomain Takeover
+    if args.takeover:
+        if not args.cname_check:
+            print("[!] --takeover requires --cname-check to run first (needs its output) "
+                  "— skipping.")
+        elif sm.is_completed("takeover") and (output_dir / "takeover_confirmed.json").exists():
+            print(f"[*] Resuming: loading takeover results from "
+                  f"{output_dir / 'takeover_confirmed.json'}")
+            try:
+                takeover_findings = json.loads(
+                    (output_dir / "takeover_confirmed.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                takeover_findings = takeover.detect_subdomain_takeovers(cname_findings, output_dir)
+        else:
+            takeover_findings = takeover.detect_subdomain_takeovers(cname_findings, output_dir)
+            sm.mark_completed("takeover", {"confirmed": len(takeover_findings)})
+
     # Stage 13: Exposed Sensitive Files & Dev Artifacts
     if args.sensitive_files and live_hosts:
         if sm.is_completed("sensitive_files") and (output_dir / "sensitive_files.json").exists():
@@ -483,6 +569,22 @@ def main():
             security_grades = audits.grade_security_headers(live_hosts, output_dir)
             sm.mark_completed("sec_headers", {"graded": len(security_grades)})
 
+    cve_findings = []
+    # Stage: Tech-Stack CVE Correlation
+    if args.cve_correlate:
+        if sm.is_completed("cve_correlate") and (output_dir / "cve_correlation.json").exists():
+            print(f"[*] Resuming: loading CVE correlation from "
+                  f"{output_dir / 'cve_correlation.json'}")
+            try:
+                cve_findings = json.loads(
+                    (output_dir / "cve_correlation.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                cve_findings = cve_correlate.correlate_cves(httpx_records, output_dir)
+        else:
+            cve_findings = cve_correlate.correlate_cves(httpx_records, output_dir)
+            sm.mark_completed("cve_correlate", {"technologies_flagged": len(cve_findings)})
+
     extra_md = []
     if ports_by_host:
         extra_md.append(f"- Hosts with open ports: **{len(ports_by_host)}**")
@@ -502,6 +604,15 @@ def main():
         extra_md.append(f"- Audited HTTP endpoints: **{len(header_findings)}**")
     if cname_findings:
         extra_md.append(f"- External service CNAMEs: **{len(cname_findings)}**")
+    if takeover_findings:
+        extra_md.append(f"- Confirmed subdomain takeovers: **{len(takeover_findings)}**")
+    if leak_findings:
+        extra_md.append(f"- Potential GitHub code references: **{len(leak_findings)}**")
+    if cve_findings:
+        total_cves = sum(len(f.get("cves", [])) for f in cve_findings)
+        extra_md.append(
+            f"- Tech-stack CVEs: **{total_cves}** across {len(cve_findings)} technologies"
+        )
     if sensitive_findings:
         extra_md.append(f"- Exposed sensitive files: **{len(sensitive_findings)}**")
     if waf_findings:
@@ -545,6 +656,9 @@ def main():
             "asn_ranges": asn_findings,
             "headers_audit": header_findings,
             "cname_audit": cname_findings,
+            "takeover_confirmed": takeover_findings,
+            "github_leaks": leak_findings,
+            "cve_correlation": cve_findings,
             "sensitive_files": sensitive_findings,
             "waf_detection": waf_findings,
             "sitemap_routes": sitemap_routes,
@@ -592,6 +706,12 @@ def main():
             stats_dict["Cloud assets"] = len(cloud_findings)
         if cname_findings:
             stats_dict["Service CNAMEs"] = len(cname_findings)
+        if takeover_findings:
+            stats_dict["Confirmed takeovers"] = len(takeover_findings)
+        if leak_findings:
+            stats_dict["GitHub leaks"] = len(leak_findings)
+        if cve_findings:
+            stats_dict["Tech CVEs"] = len(cve_findings)
         if sensitive_findings:
             stats_dict["Sensitive files"] = len(sensitive_findings)
         if diff_data and diff_data.get("new_subdomains"):

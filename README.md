@@ -108,6 +108,11 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `--asn` | Map network ASN and IP ranges for live hosts via RDAP |
 | `--headers` | Audit HTTP security headers and CORS configurations |
 | `--cname-check` | Audit DNS CNAME records for external cloud service dependencies |
+| `--takeover` | Confirm subdomain takeovers via HTTP fingerprint (requires `--cname-check`) |
+| `--scope FILE` | Filter discovered subdomains against HackerOne/Bugcrowd or plain-text scope |
+| `--github-leaks` | Search public GitHub code for leaked references and credentials |
+| `--github-token TOKEN` | GitHub Personal Access Token for `--github-leaks` |
+| `--cve-correlate` | Cross-reference detected tech stack versions against NVD CVEs |
 | `--ct-logs` | Harvest subdomains from public Certificate Transparency logs (`crt.sh`) |
 | `--sensitive-files` | Audit live hosts for exposed sensitive files (`.git`, `.env`, API docs) |
 | `--waf` | Fingerprint Web Application Firewalls (Cloudflare, AWS, Akamai, etc.) |
