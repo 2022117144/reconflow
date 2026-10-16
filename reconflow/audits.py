@@ -12,12 +12,21 @@ Defensive asset auditing modules:
 8. Route harvesting from /robots.txt and /sitemap.xml
 9. Email security & DNS governance (SPF and DMARC)
 10. Differential recon change detection (subdomains, hosts, ports)
+11. Subdomain Permutations & Mutation Engine
+12. SSL/TLS Certificate Security & Expiration Audit
+13. Favicon technology fingerprinting
+14. RFC 9116 security.txt policy harvester
+15. Defensive HTTP response header security grading (A+ to F)
 """
 
+import hashlib
 import json
 import re
 import socket
+import ssl
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Regular expressions for public cloud storage endpoints
@@ -550,3 +559,345 @@ def compute_differential(
         print("[+] Diff: Saved baseline snapshot for future change tracking")
 
     return diff_result
+
+
+PERMUTATION_WORDS = [
+    "dev", "stage", "staging", "test", "qa", "uat", "admin", "api",
+    "internal", "corp", "vpn", "mail", "portal", "app", "v2", "beta",
+    "prod", "demo", "gateway", "auth", "sso", "dashboard", "preview",
+]
+
+
+def generate_permutations(
+    subdomains: list,
+    domain: str,
+    output_dir: Path,
+    max_candidates: int = 300,
+    threads: int = 15,
+) -> list:
+    """Generate intelligent permutations of discovered subdomains and test resolution."""
+    print("[*] Generating subdomain permutations and testing DNS resolution...")
+    candidates = set()
+
+    clean_subs = []
+    for s in subdomains:
+        s = s.lower().strip()
+        if s.endswith(f".{domain}"):
+            prefix = s[: -(len(domain) + 1)]
+            if prefix and "." not in prefix:
+                clean_subs.append(prefix)
+
+    clean_subs = list(set(clean_subs))[:15]
+
+    for base in clean_subs:
+        for word in PERMUTATION_WORDS:
+            candidates.add(f"{word}-{base}.{domain}")
+            candidates.add(f"{base}-{word}.{domain}")
+            candidates.add(f"{word}.{base}.{domain}")
+            candidates.add(f"{base}1.{domain}")
+            candidates.add(f"{base}2.{domain}")
+
+    for word in PERMUTATION_WORDS:
+        candidates.add(f"{word}.{domain}")
+
+    candidates = [c for c in candidates if c not in set(subdomains)][:max_candidates]
+
+    def _resolve(host):
+        try:
+            socket.gethostbyname(host)
+            return host
+        except (socket.gaierror, OSError):
+            return None
+
+    resolved = []
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        for result in executor.map(_resolve, candidates):
+            if result:
+                resolved.append(result)
+
+    resolved = sorted(resolved)
+    out_file = output_dir / "permutations.txt"
+    out_file.write_text("\n".join(resolved), encoding="utf-8")
+    print(f"[+] Identified {len(resolved)} active permutation subdomain(s)")
+    return resolved
+
+
+def audit_ssl_certificates(live_hosts: list, output_dir: Path, timeout: int = 5) -> list:
+    """Inspect SSL/TLS certificates for expiration dates, self-signed certs, and SANs."""
+    print("[*] Auditing SSL/TLS certificates and certificate validity...")
+    audit_results = []
+    seen_hosts = set()
+
+    for item in live_hosts[:30]:
+        host = item.split("://", 1)[-1].split("/", 1)[0].split("?")[0]
+        port = 443
+        if ":" in host:
+            h_part, p_part = host.split(":", 1)
+            try:
+                port = int(p_part)
+                host = h_part
+            except ValueError:
+                pass
+
+        if host in seen_hosts:
+            continue
+        seen_hosts.add(host)
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        try:
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                    cert = ssock.getpeercert(binary_form=False)
+                    tls_version = ssock.version() or "Unknown"
+
+                    is_valid = True
+                    try:
+                        v_ctx = ssl.create_default_context()
+                        with socket.create_connection((host, port), timeout=timeout) as v_sock:
+                            with v_ctx.wrap_socket(v_sock, server_hostname=host) as v_ssock:
+                                cert = v_ssock.getpeercert()
+                    except Exception:
+                        is_valid = False
+
+                    expiry_date_str = cert.get("notAfter", "")
+                    days_remaining = None
+                    if expiry_date_str:
+                        try:
+                            exp_dt = datetime.strptime(expiry_date_str, "%b %d %H:%M:%S %Y %Z")
+                            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                            now = datetime.now(timezone.utc)
+                            days_remaining = (exp_dt - now).days
+                        except Exception:
+                            pass
+
+                    issuer = dict(x[0] for x in cert.get("issuer", ()))
+                    subject = dict(x[0] for x in cert.get("subject", ()))
+                    issuer_org = issuer.get("organizationName", issuer.get("commonName", "Unknown"))
+                    common_name = subject.get("commonName", "Unknown")
+
+                    sans = [val for typ, val in cert.get("subjectAltName", ()) if typ == "DNS"]
+
+                    is_self_signed = (issuer == subject and issuer != {})
+                    is_expiring = (days_remaining is not None and days_remaining < 30)
+
+                    audit_results.append({
+                        "host": host,
+                        "port": port,
+                        "valid": is_valid,
+                        "common_name": common_name,
+                        "issuer": issuer_org,
+                        "days_remaining": days_remaining,
+                        "self_signed": is_self_signed,
+                        "expiring_soon": is_expiring,
+                        "tls_version": tls_version,
+                        "sans": sans[:10],
+                    })
+        except Exception:
+            continue
+
+    out_file = output_dir / "ssl_audit.json"
+    out_file.write_text(json.dumps(audit_results, indent=2), encoding="utf-8")
+    flagged = sum(1 for r in audit_results if r.get("self_signed") or r.get("expiring_soon"))
+    print(f"[+] Audited {len(audit_results)} SSL/TLS hosts: {flagged} certificate warning(s)")
+    return audit_results
+
+
+KNOWN_FAVICONS = {
+    "9f1700676b701a2f6442f9b8c322b2b1": "Spring Boot",
+    "0488faca4c3c69c6cf5e40e0beae7d4a": "Jenkins",
+    "e9d564ff9f14371fa9d1c75cff02170b": "Apache Tomcat",
+    "124b89569e5d4e0828753abdf70c5384": "Jira / Atlassian",
+    "60c386629bf57a5814e548846c4f74ab": "Django",
+    "c5e933d1c1a9231f471e988be0896eb3": "Laravel",
+    "a0c918a0e88beee0840b3ffb6e680a6d": "GitLab",
+    "3b573514a6e3d23190df11176b6bf041": "WordPress",
+    "485e94be06e682d334582f31f80ec326": "PhpMyAdmin",
+    "582ee54ccb7a70183350ad5c29215017": "Kibana",
+}
+
+
+def fingerprint_favicons(live_hosts: list, output_dir: Path, timeout: int = 5) -> list:
+    """Download and hash /favicon.ico to fingerprint underlying web application stacks."""
+    print("[*] Fingerprinting web application frameworks via favicon hashes...")
+    findings = []
+    seen = set()
+
+    for host in live_hosts[:30]:
+        base_url = host.rstrip("/")
+        if not base_url.startswith("http"):
+            base_url = f"https://{base_url}"
+
+        if base_url in seen:
+            continue
+        seen.add(base_url)
+
+        target = f"{base_url}/favicon.ico"
+        try:
+            req = urllib.request.Request(
+                target,
+                headers={"User-Agent": "reconflow-audit"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = resp.read(65536)
+                    if data:
+                        md5_hash = hashlib.md5(data).hexdigest()
+                        tech = KNOWN_FAVICONS.get(md5_hash, "Custom / Unknown Favicon")
+                        findings.append({
+                            "url": base_url,
+                            "favicon_url": target,
+                            "md5": md5_hash,
+                            "technology": tech,
+                            "matched": tech != "Custom / Unknown Favicon",
+                        })
+        except Exception:
+            continue
+
+    out_file = output_dir / "favicon_fingerprints.json"
+    out_file.write_text(json.dumps(findings, indent=2), encoding="utf-8")
+    matched_count = sum(1 for f in findings if f["matched"])
+    print(f"[+] Downloaded {len(findings)} favicons: {matched_count} framework match(es)")
+    return findings
+
+
+def harvest_security_txt(
+    domain: str,
+    live_hosts: list,
+    output_dir: Path,
+    timeout: int = 5,
+) -> dict:
+    """Harvest and parse RFC 9116 security.txt policies and vulnerability disclosure contacts."""
+    print(f"[*] Harvesting RFC 9116 security.txt disclosure policies for {domain}...")
+    candidates = [f"https://{domain}"] + [h for h in live_hosts[:10] if domain in h]
+    result = {
+        "domain": domain,
+        "found": False,
+        "url": None,
+        "contact": [],
+        "expires": None,
+        "encryption": None,
+        "policy": None,
+        "hiring": None,
+        "acknowledgments": None,
+    }
+
+    paths = ["/.well-known/security.txt", "/security.txt"]
+
+    for base in candidates:
+        base_url = base.rstrip("/")
+        if not base_url.startswith("http"):
+            base_url = f"https://{base_url}"
+
+        for path in paths:
+            target = f"{base_url}{path}"
+            try:
+                req = urllib.request.Request(
+                    target,
+                    headers={"User-Agent": "reconflow-audit"},
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        text = resp.read(8192).decode("utf-8", errors="ignore")
+                        if "contact:" in text.lower():
+                            result["found"] = True
+                            result["url"] = target
+                            for line in text.splitlines():
+                                line = line.strip()
+                                if not line or line.startswith("#"):
+                                    continue
+                                if ":" in line:
+                                    field, val = line.split(":", 1)
+                                    f_low = field.strip().lower()
+                                    v_clean = val.strip()
+                                    if f_low == "contact":
+                                        result["contact"].append(v_clean)
+                                    elif f_low in ("expires", "encryption", "policy",
+                                                   "hiring", "acknowledgments"):
+                                        result[f_low] = v_clean
+                            break
+            except Exception:
+                continue
+        if result["found"]:
+            break
+
+    out_file = output_dir / "security_txt.json"
+    out_file.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    status_str = f"Found at {result['url']}" if result["found"] else "Not found"
+    print(f"[+] RFC 9116 security.txt: {status_str}")
+    return result
+
+
+SECURITY_HEADERS = {
+    "strict-transport-security": ("HSTS", 25, "Enforces HTTPS encryption"),
+    "content-security-policy": ("CSP", 25, "Restricts script execution & prevents XSS"),
+    "x-frame-options": ("XFO", 15, "Protects against clickjacking attacks"),
+    "x-content-type-options": ("XCTO", 15, "Prevents MIME-type sniffing"),
+    "referrer-policy": ("Referrer", 10, "Controls sensitive URL referrer leakage"),
+    "permissions-policy": ("Permissions", 10, "Restricts sensitive browser APIs"),
+}
+
+
+def grade_security_headers(live_hosts: list, output_dir: Path, timeout: int = 5) -> list:
+    """Analyze defensive HTTP response headers and assign an A+ to F security posture grade."""
+    print("[*] Analyzing and grading defensive HTTP response headers...")
+    grades = []
+
+    for host in live_hosts[:30]:
+        target_url = host if host.startswith("http") else f"https://{host}"
+        try:
+            req = urllib.request.Request(
+                target_url,
+                headers={"User-Agent": "reconflow-audit"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                headers = {k.lower(): v for k, v in resp.headers.items()}
+                score = 0
+                present = []
+                missing = []
+
+                for header, (short_name, weight, description) in SECURITY_HEADERS.items():
+                    if header in headers:
+                        score += weight
+                        present.append({
+                            "header": header,
+                            "name": short_name,
+                            "value": headers[header],
+                        })
+                    else:
+                        missing.append({
+                            "header": header,
+                            "name": short_name,
+                            "description": description,
+                        })
+
+                if score >= 90:
+                    letter = "A+"
+                elif score >= 80:
+                    letter = "A"
+                elif score >= 70:
+                    letter = "B"
+                elif score >= 50:
+                    letter = "C"
+                elif score >= 30:
+                    letter = "D"
+                else:
+                    letter = "F"
+
+                grades.append({
+                    "url": target_url,
+                    "score": score,
+                    "grade": letter,
+                    "present_headers": present,
+                    "missing_headers": missing,
+                })
+        except Exception:
+            continue
+
+    out_file = output_dir / "security_grades.json"
+    out_file.write_text(json.dumps(grades, indent=2), encoding="utf-8")
+    avg_score = int(sum(g["score"] for g in grades) / len(grades)) if grades else 0
+    print(f"[+] Graded {len(grades)} endpoints: Average defensive score {avg_score}/100")
+    return grades

@@ -214,6 +214,85 @@ def _email_security_card(data):
     )
 
 
+def _ssl_table(findings):
+    if not findings:
+        return "<p>No SSL/TLS certificate audit data available.</p>"
+    rows = []
+    for f in findings:
+        status_color = "#ef4444" if (f.get("self_signed") or f.get("expiring_soon")) else "#10b981"
+        status_text = "Self-Signed" if f.get("self_signed") else (
+            f"Expiring in {f.get('days_remaining')}d" if f.get("expiring_soon") else "Valid"
+        )
+        days_str = (
+            f"{f.get('days_remaining')} days" if f.get("days_remaining") is not None else "N/A"
+        )
+        rows.append(
+            f"<tr><td><code>{f.get('host')}:{f.get('port')}</code></td>"
+            f"<td>{f.get('issuer')}</td>"
+            f"<td>{days_str}</td>"
+            f"<td style='color:{status_color};font-weight:bold;'>{status_text}</td>"
+            f"<td><code>{f.get('tls_version')}</code></td></tr>"
+        )
+    return (
+        "<table><tr><th>Host</th><th>Issuer</th><th>Expiry</th>"
+        "<th>Cert Status</th><th>TLS Version</th></tr>" + "".join(rows) + "</table>"
+    )
+
+
+def _favicon_table(findings):
+    if not findings:
+        return "<p>No favicon technology fingerprints matched.</p>"
+    rows = [
+        f"<tr><td><code>{f.get('url')}</code></td>"
+        f"<td><strong>{f.get('technology')}</strong></td>"
+        f"<td><code>{f.get('md5')}</code></td></tr>"
+        for f in findings if f.get("matched")
+    ]
+    if not rows:
+        return "<p>Favicons collected, but no known framework default hashes matched.</p>"
+    return (
+        "<table><tr><th>Host</th><th>Identified Technology</th><th>Favicon MD5</th></tr>"
+        + "".join(rows) + "</table>"
+    )
+
+
+def _security_grades_table(findings):
+    if not findings:
+        return "<p>No HTTP security header grading performed.</p>"
+    grade_colors = {
+        "A+": "#10b981", "A": "#10b981", "B": "#3b82f6",
+        "C": "#f59e0b", "D": "#f97316", "F": "#ef4444",
+    }
+    rows = []
+    for f in findings:
+        color = grade_colors.get(f.get("grade"), "#9ca3af")
+        missing_names = ", ".join(m["name"] for m in f.get("missing_headers", [])) or "None"
+        rows.append(
+            f"<tr><td><code>{f.get('url')}</code></td>"
+            f"<td style='color:{color};font-weight:bold;font-size:16px;'>{f.get('grade')} "
+            f"({f.get('score')}/100)</td>"
+            f"<td><span style='color:#ef4444;'>{missing_names}</span></td></tr>"
+        )
+    return (
+        "<table><tr><th>Endpoint</th><th>Defensive Grade</th>"
+        "<th>Missing Defense Headers</th></tr>" + "".join(rows) + "</table>"
+    )
+
+
+def _security_txt_card(data):
+    if not data or not data.get("found"):
+        return "<p>No RFC 9116 security.txt policy found.</p>"
+    contacts = ", ".join(data.get("contact", [])) or "None"
+    return (
+        "<table><tr><th>Field</th><th>Value</th></tr>"
+        f"<tr><td>Policy URL</td><td><a href='{data.get('url')}' target='_blank'>"
+        f"<code>{data.get('url')}</code></a></td></tr>"
+        f"<tr><td>Contact(s)</td><td>{contacts}</td></tr>"
+        f"<tr><td>Expires</td><td><code>{data.get('expires') or 'N/A'}</code></td></tr>"
+        f"<tr><td>Policy</td><td>{data.get('policy') or 'N/A'}</td></tr></table>"
+    )
+
+
 def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
                       ports_by_host=None, vuln_findings=None,
                       secret_findings=None, fuzz_findings=None,
@@ -221,7 +300,10 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
                       cloud_findings=None, cname_findings=None,
                       sensitive_findings=None, waf_findings=None,
                       email_security=None, diff_data=None,
-                      route_count=0):
+                      route_count=0,
+                      ssl_findings=None, favicon_findings=None,
+                      security_grades=None, security_txt=None,
+                      permutation_count=0):
     ports_by_host = ports_by_host or {}
     vuln_findings = vuln_findings or []
     secret_findings = secret_findings or []
@@ -230,6 +312,9 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
     cname_findings = cname_findings or []
     sensitive_findings = sensitive_findings or []
     waf_findings = waf_findings or []
+    ssl_findings = ssl_findings or []
+    favicon_findings = favicon_findings or []
+    security_grades = security_grades or []
 
     stats = "".join([
         _stat("subdomains", len(subdomains)),
@@ -245,10 +330,15 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
         _stat("sensitive files", len(sensitive_findings)),
         _stat("WAF protected", sum(1 for w in waf_findings if w.get("protected"))),
         _stat("harvested routes", route_count),
+        _stat("SSL audited", len(ssl_findings)),
+        _stat("favicon tech", sum(1 for f in favicon_findings if f.get("matched"))),
+        _stat("permutations", permutation_count),
     ])
 
     sections = f"""
 {_diff_section(diff_data)}
+<h2>Defensive HTTP Security Header Grades</h2>
+{_security_grades_table(security_grades)}
 <h2>Vulnerabilities (nuclei)</h2>
 {_vuln_table(vuln_findings)}
 <h2>Open Ports (naabu)</h2>
@@ -259,10 +349,16 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
 {_secrets_table(secret_findings)}
 <h2>Exposed Sensitive Files & Dev Artifacts</h2>
 {_sensitive_files_table(sensitive_findings)}
+<h2>SSL / TLS Certificate Audit</h2>
+{_ssl_table(ssl_findings)}
 <h2>WAF & Reverse Proxy Detection</h2>
 {_waf_table(waf_findings)}
+<h2>Favicon Framework Fingerprints</h2>
+{_favicon_table(favicon_findings)}
 <h2>Email Security & DNS Governance</h2>
 {_email_security_card(email_security)}
+<h2>RFC 9116 Security.txt Disclosure</h2>
+{_security_txt_card(security_txt)}
 <h2>Cloud Storage References</h2>
 {_cloud_assets_table(cloud_findings)}
 <h2>Service CNAME Records</h2>

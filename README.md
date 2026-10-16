@@ -23,10 +23,15 @@ Subdomain discovery, live host probing, port scanning, historical URLs, vulnerab
 13. Fingerprints Web Application Firewalls (Cloudflare, CloudFront, Akamai, Imperva)
 14. Harvests routes from `/robots.txt` and `/sitemap.xml`
 15. Audits domain email spoofing protections (SPF and DMARC via DoH)
-16. Tracks differential recon changes across runs (`--diff`)
-17. Streams progress to disk so interrupted scans can be safely resumed (`--resume`)
-18. Generates summary reports (`report.md`, `report.json`, and severity-colored `report.html`)
-19. Posts completion alerts to Discord or Slack webhooks
+16. Generates and resolves subdomain permutation variants (`--alterations`)
+17. Audits SSL/TLS certificate expiry, SAN coverage, and self-signed status (`--ssl-audit`)
+18. Fingerprints web frameworks and portals via favicon MD5 hashes (`--favicon`)
+19. Discovers and parses RFC 9116 `security.txt` disclosure policies (`--security-txt`)
+20. Grades defensive HTTP response header security posture with A+ to F scorecard (`--security-headers`)
+21. Tracks differential recon changes across runs (`--diff`)
+22. Streams progress to disk so interrupted scans can be safely resumed (`--resume`)
+23. Generates summary reports (`report.md`, `report.json`, and severity-colored `report.html`)
+24. Posts completion alerts to Discord or Slack webhooks
 
 ## Requirements
 
@@ -93,7 +98,12 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `--secrets` | Scan discovered JS files for leaked API keys / tokens / JWTs |
 | `--fuzz` | Fuzz endpoints and portals on live hosts with ffuf |
 | `--wordlist` | Custom wordlist path for ffuf (default: built-in common list) |
-| `--audit` | Run all defensive asset audits (cloud, ASN, headers, CNAME, sensitive, WAF, email) |
+| `--audit` | Run all defensive asset audits (cloud, ASN, headers, CNAME, sensitive, WAF, email, SSL, favicon, security.txt, grades) |
+| `--alterations` | Generate and resolve common subdomain permutation & mutation variants |
+| `--ssl-audit` | Audit SSL/TLS certificate validity, expiry days, and SAN coverage |
+| `--favicon` | Fingerprint web application frameworks via favicon MD5 hashes |
+| `--security-txt` | Discover and parse RFC 9116 `security.txt` policies across live hosts |
+| `--security-headers` | Grade HTTP security header posture with A+ to F scorecard |
 | `--cloud-assets` | Detect cloud storage bucket references in discovered URLs and hosts |
 | `--asn` | Map network ASN and IP ranges for live hosts via RDAP |
 | `--headers` | Audit HTTP security headers and CORS configurations |
@@ -162,6 +172,7 @@ Files created in `output/<domain>/`:
 state.json           run progress and metadata (enables --resume)
 previous_run.json    snapshot baseline for differential change detection
 subdomains.txt       all discovered subdomains (subfinder + CT logs)
+permutations.txt     resolved subdomain permutation mutations (when using --alterations or --full)
 ct_subdomains.txt    subdomains discovered from Certificate Transparency logs
 live.txt             live hosts with status code, title, tech
 urls.txt             collected URLs (when using --urls or --full)
@@ -179,6 +190,10 @@ waf_detection.json   WAF/CDN reverse proxy fingerprinting (when using --audit)
 sitemap_routes.json  extracted routes from robots.txt and sitemaps (when using --audit)
 discovered_routes.txt plain list of all harvested unique paths
 email_security.json  SPF and DMARC spoofing policy audit (when using --audit)
+ssl_audit.json       SSL/TLS certificate expiration & SAN audit (when using --ssl-audit or --audit)
+favicon_fingerprints.json framework detection via favicon MD5 hashes (when using --favicon or --audit)
+security_txt.json    RFC 9116 vulnerability disclosure policies (when using --security-txt or --audit)
+security_grades.json defensive HTTP security header letter grades (when using --security-headers or --audit)
 diff.json            new & removed subdomains, live hosts, and ports (when using --diff)
 report.md            summary Markdown report
 report.json          structured JSON report (when using --json)
@@ -216,6 +231,11 @@ screenshots/         captured screenshots of live hosts (when using --screenshot
 - [x] Web Application Firewall (WAF) & CDN fingerprinting
 - [x] Robots.txt and sitemap route harvesting
 - [x] Email security & DNS governance (SPF / DMARC)
+- [x] Subdomain permutation & mutation engine (`--alterations`)
+- [x] SSL/TLS certificate expiration & SAN auditing (`--ssl-audit`)
+- [x] Web framework favicon MD5 fingerprinting (`--favicon`)
+- [x] RFC 9116 `security.txt` policy harvesting (`--security-txt`)
+- [x] Defensive HTTP response header posture grading (`--security-headers`)
 - [x] Differential recon & change tracking (`--diff`)
 
 ## Contributing

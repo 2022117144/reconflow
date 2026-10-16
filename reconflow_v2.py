@@ -130,6 +130,16 @@ def main():
                     help="audit domain SPF and DMARC DNS policies for spoofing vulnerabilities")
     ap.add_argument("--diff", action="store_true",
                     help="compute differential changes against previous scan baseline")
+    ap.add_argument("--alterations", action="store_true",
+                    help="generate intelligent subdomain permutations and test resolution")
+    ap.add_argument("--ssl-audit", action="store_true",
+                    help="audit SSL/TLS certificates for expiration, self-signed certs, and SANs")
+    ap.add_argument("--favicon", action="store_true",
+                    help="fingerprint web application frameworks via favicon MD5 hashes")
+    ap.add_argument("--security-txt", action="store_true",
+                    help="harvest and parse RFC 9116 security.txt disclosure policies")
+    ap.add_argument("--security-headers", action="store_true",
+                    help="grade defensive HTTP response headers (A+ to F posture score)")
     ap.add_argument("--full", action="store_true",
                     help="shortcut for all discovery stages, audits, and HTML report")
     ap.add_argument("--html", action="store_true", help="also build an HTML report")
@@ -158,16 +168,20 @@ def main():
         args.ports = args.urls = args.vuln = args.secrets = args.fuzz = args.html = True
         args.audit = True
         args.ct_logs = True
+        args.alterations = True
         args.diff = True
 
     if args.audit:
         args.cloud_assets = args.asn = args.headers = args.cname_check = True
         args.sensitive_files = args.waf = args.email_security = args.sitemap = True
+        args.ssl_audit = args.favicon = args.security_txt = args.security_headers = True
 
     output_dir = Path(args.output) / args.domain
     output_dir.mkdir(parents=True, exist_ok=True)
 
     sm = state.StateManager(output_dir, args.domain, resume=args.resume)
+
+    permutation_results = []
 
     # Stage 1: Subdomains
     if sm.is_completed("subdomains") and (output_dir / "subdomains.txt").exists():
@@ -181,6 +195,13 @@ def main():
             subdomains = sorted(list(set(subdomains) | set(ct_subs)))
             (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
             print(f"[+] Combined total: {len(subdomains)} unique subdomains")
+        if args.alterations:
+            permutation_results = audits.generate_permutations(
+                subdomains, args.domain, output_dir
+            )
+            subdomains = sorted(list(set(subdomains) | set(permutation_results)))
+            (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
+            print(f"[+] Post-permutations total: {len(subdomains)} unique subdomains")
         sm.mark_completed("subdomains", {"count": len(subdomains)})
 
     # Stage 2: Live Hosts
@@ -200,6 +221,8 @@ def main():
     header_findings, cname_findings = [], []
     sensitive_findings, waf_findings = [], []
     email_security, sitemap_routes, diff_data = {}, {}, {}
+    ssl_findings, favicon_findings, security_grades = [], [], []
+    security_txt = {}
 
     # Stage 3: Port Scan
     if args.ports and live_hosts:
@@ -404,6 +427,62 @@ def main():
             output_dir, args.domain, subdomains, live_hosts, ports_by_host
         )
 
+    # Stage 18: SSL/TLS Certificate Security Audit
+    if args.ssl_audit and live_hosts:
+        if sm.is_completed("ssl_audit") and (output_dir / "ssl_audit.json").exists():
+            print(f"[*] Resuming: loading SSL audit from {output_dir / 'ssl_audit.json'}")
+            try:
+                ssl_findings = json.loads(
+                    (output_dir / "ssl_audit.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                ssl_findings = audits.audit_ssl_certificates(live_hosts, output_dir)
+        else:
+            ssl_findings = audits.audit_ssl_certificates(live_hosts, output_dir)
+            sm.mark_completed("ssl_audit", {"audited": len(ssl_findings)})
+
+    # Stage 19: Favicon Technology Fingerprinting
+    if args.favicon and live_hosts:
+        if sm.is_completed("favicon") and (output_dir / "favicon_fingerprints.json").exists():
+            print(f"[*] Resuming: loading favicons from {output_dir / 'favicon_fingerprints.json'}")
+            try:
+                favicon_findings = json.loads(
+                    (output_dir / "favicon_fingerprints.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                favicon_findings = audits.fingerprint_favicons(live_hosts, output_dir)
+        else:
+            favicon_findings = audits.fingerprint_favicons(live_hosts, output_dir)
+            sm.mark_completed("favicon", {"fingerprinted": len(favicon_findings)})
+
+    # Stage 20: RFC 9116 Security.txt Policy Harvester
+    if args.security_txt:
+        if sm.is_completed("security_txt") and (output_dir / "security_txt.json").exists():
+            print(f"[*] Resuming: loading security.txt from {output_dir / 'security_txt.json'}")
+            try:
+                security_txt = json.loads(
+                    (output_dir / "security_txt.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                security_txt = audits.harvest_security_txt(args.domain, live_hosts, output_dir)
+        else:
+            security_txt = audits.harvest_security_txt(args.domain, live_hosts, output_dir)
+            sm.mark_completed("security_txt", {"found": security_txt.get("found", False)})
+
+    # Stage 21: Defensive HTTP Response Header Grading
+    if args.security_headers and live_hosts:
+        if sm.is_completed("sec_headers") and (output_dir / "security_grades.json").exists():
+            print(f"[*] Resuming: loading header grades from {output_dir / 'security_grades.json'}")
+            try:
+                security_grades = json.loads(
+                    (output_dir / "security_grades.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                security_grades = audits.grade_security_headers(live_hosts, output_dir)
+        else:
+            security_grades = audits.grade_security_headers(live_hosts, output_dir)
+            sm.mark_completed("sec_headers", {"graded": len(security_grades)})
+
     extra_md = []
     if ports_by_host:
         extra_md.append(f"- Hosts with open ports: **{len(ports_by_host)}**")
@@ -437,6 +516,17 @@ def main():
             f"- Differential changes: **+{len(diff_data.get('new_subdomains', []))}** new subs, "
             f"**+{len(diff_data.get('new_live_hosts', []))}** new live"
         )
+    if ssl_findings:
+        warn_ssl = sum(1 for s in ssl_findings if s.get("self_signed") or s.get("expiring_soon"))
+        extra_md.append(f"- SSL/TLS certs audited: **{len(ssl_findings)}** ({warn_ssl} warnings)")
+    if favicon_findings:
+        matched_fav = sum(1 for f in favicon_findings if f.get("matched"))
+        extra_md.append(f"- Favicons matched: **{matched_fav}/{len(favicon_findings)}**")
+    if security_txt and security_txt.get("found"):
+        extra_md.append(f"- RFC 9116 security.txt: **Disclosed** ({security_txt.get('url')})")
+    if security_grades:
+        avg_score = int(sum(g["score"] for g in security_grades) / len(security_grades))
+        extra_md.append(f"- Defensive header posture: **{avg_score}/100 average grade**")
 
     build_markdown_report(args.domain, output_dir, subdomains, live_hosts, extra_md)
 
@@ -460,6 +550,11 @@ def main():
             "sitemap_routes": sitemap_routes,
             "email_security": email_security,
             "differential": diff_data,
+            "ssl_audit": ssl_findings,
+            "favicon_fingerprints": favicon_findings,
+            "security_txt": security_txt,
+            "security_grades": security_grades,
+            "permutations": permutation_results,
         }, indent=2), encoding="utf-8")
 
     if args.html:
@@ -478,6 +573,11 @@ def main():
             email_security=email_security,
             diff_data=diff_data,
             route_count=len(sitemap_routes),
+            ssl_findings=ssl_findings,
+            favicon_findings=favicon_findings,
+            security_grades=security_grades,
+            security_txt=security_txt,
+            permutation_count=len(permutation_results),
         )
 
     if args.notify:
@@ -496,6 +596,8 @@ def main():
             stats_dict["Sensitive files"] = len(sensitive_findings)
         if diff_data and diff_data.get("new_subdomains"):
             stats_dict["New subdomains"] = len(diff_data["new_subdomains"])
+        if ssl_findings:
+            stats_dict["SSL hosts"] = len(ssl_findings)
         notify.send_webhook(args.notify, args.domain, stats_dict)
 
     print(f"[+] Report saved to {output_dir / 'report.md'}")
