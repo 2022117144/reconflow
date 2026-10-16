@@ -194,7 +194,7 @@ def main():
             print(f"[*] Resuming: loading vulnerabilities from {output_dir / 'vulns.json'}")
             try:
                 lines = (output_dir / "vulns.json").read_text(encoding="utf-8").splitlines()
-                vuln_findings = [json.loads(l) for l in lines if l.strip()]
+                vuln_findings = [json.loads(line) for line in lines if line.strip()]
             except Exception:
                 vuln_findings = modules.vuln_scan(live_hosts, output_dir, args.severity)
         else:

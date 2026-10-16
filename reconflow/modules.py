@@ -215,4 +215,3 @@ def dir_fuzz(live_hosts, output_dir: Path, wordlist: str = None, threads: int = 
     out_file.write_text(json.dumps(all_findings, indent=2), encoding="utf-8")
     print(f"[+] ffuf discovered {len(all_findings)} endpoints")
     return all_findings
-
