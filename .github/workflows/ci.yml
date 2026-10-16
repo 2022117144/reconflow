@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lint tools
+        run: pip install flake8
+      - name: Syntax check
+        run: python -m py_compile reconflow_v2.py reconflow/*.py
+      - name: Lint
+        run: flake8 reconflow_v2.py reconflow --max-line-length=100 --ignore=E203,W503
