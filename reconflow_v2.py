@@ -19,7 +19,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from reconflow import config, modules, notify, report, state
+from reconflow import audits, config, modules, notify, report, state
 
 
 def run_subfinder(domain: str, output_dir: Path):
@@ -108,8 +108,18 @@ def main():
     ap.add_argument("--secrets", action="store_true", help="scan JS files for leaked secrets")
     ap.add_argument("--fuzz", action="store_true", help="fuzz endpoints on live hosts with ffuf")
     ap.add_argument("--wordlist", help="wordlist for ffuf fuzzing")
+    ap.add_argument("--audit", action="store_true",
+                    help="run all defensive asset audits (cloud, ASN, headers, CNAME)")
+    ap.add_argument("--cloud-assets", action="store_true",
+                    help="detect cloud storage bucket references in discovered URLs and hosts")
+    ap.add_argument("--asn", action="store_true",
+                    help="map network ASN and IP ranges for live hosts via RDAP")
+    ap.add_argument("--headers", action="store_true",
+                    help="audit HTTP security headers and CORS configurations")
+    ap.add_argument("--cname-check", action="store_true",
+                    help="audit DNS CNAME records for external cloud service dependencies")
     ap.add_argument("--full", action="store_true",
-                    help="shortcut for --ports --urls --vuln --secrets --fuzz --html")
+                    help="shortcut for all discovery stages, audits, and HTML report")
     ap.add_argument("--html", action="store_true", help="also build an HTML report")
     ap.add_argument("--notify", metavar="WEBHOOK_URL",
                     help="Discord/Slack webhook to ping when done")
@@ -134,6 +144,10 @@ def main():
 
     if args.full:
         args.ports = args.urls = args.vuln = args.secrets = args.fuzz = args.html = True
+        args.audit = True
+
+    if args.audit:
+        args.cloud_assets = args.asn = args.headers = args.cname_check = True
 
     output_dir = Path(args.output) / args.domain
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -162,6 +176,8 @@ def main():
 
     ports_by_host, urls, params = {}, [], []
     vuln_findings, secret_findings, fuzz_findings = [], [], []
+    cloud_findings, asn_findings = [], {}
+    header_findings, cname_findings = [], []
 
     # Stage 3: Port Scan
     if args.ports and live_hosts:
@@ -243,6 +259,62 @@ def main():
             print(f"[+] Screenshots saved to {shots_dir}")
             sm.mark_completed("screenshots")
 
+    # Stage 9: Cloud Storage Asset Detection
+    if args.cloud_assets and (urls or live_hosts):
+        if sm.is_completed("cloud_assets") and (output_dir / "cloud_assets.json").exists():
+            print(f"[*] Resuming: loading cloud assets from {output_dir / 'cloud_assets.json'}")
+            try:
+                cloud_findings = json.loads(
+                    (output_dir / "cloud_assets.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                cloud_findings = audits.detect_cloud_assets(urls, live_hosts, output_dir)
+        else:
+            cloud_findings = audits.detect_cloud_assets(urls, live_hosts, output_dir)
+            sm.mark_completed("cloud_assets", {"assets_count": len(cloud_findings)})
+
+    # Stage 10: Network ASN & IP Range Mapping
+    if args.asn and live_hosts:
+        if sm.is_completed("asn") and (output_dir / "asn_ranges.json").exists():
+            print(f"[*] Resuming: loading ASN mappings from {output_dir / 'asn_ranges.json'}")
+            try:
+                asn_findings = json.loads(
+                    (output_dir / "asn_ranges.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                asn_findings = audits.lookup_asn_ranges(live_hosts, output_dir)
+        else:
+            asn_findings = audits.lookup_asn_ranges(live_hosts, output_dir)
+            sm.mark_completed("asn", {"ranges_count": len(asn_findings)})
+
+    # Stage 11: HTTP Headers & CORS Configuration Audit
+    if args.headers and live_hosts:
+        if sm.is_completed("headers") and (output_dir / "headers_audit.json").exists():
+            print(f"[*] Resuming: loading header audits from {output_dir / 'headers_audit.json'}")
+            try:
+                header_findings = json.loads(
+                    (output_dir / "headers_audit.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                header_findings = audits.audit_http_headers(live_hosts, output_dir)
+        else:
+            header_findings = audits.audit_http_headers(live_hosts, output_dir)
+            sm.mark_completed("headers", {"audited_count": len(header_findings)})
+
+    # Stage 12: DNS CNAME Record Validation
+    if args.cname_check and subdomains:
+        if sm.is_completed("cname") and (output_dir / "cname_audit.json").exists():
+            print(f"[*] Resuming: loading CNAME audit from {output_dir / 'cname_audit.json'}")
+            try:
+                cname_findings = json.loads(
+                    (output_dir / "cname_audit.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                cname_findings = audits.audit_cname_records(subdomains, output_dir)
+        else:
+            cname_findings = audits.audit_cname_records(subdomains, output_dir)
+            sm.mark_completed("cname", {"flagged_count": len(cname_findings)})
+
     extra_md = []
     if ports_by_host:
         extra_md.append(f"- Hosts with open ports: **{len(ports_by_host)}**")
@@ -254,6 +326,14 @@ def main():
         extra_md.append(f"- Potential secrets found: **{len(secret_findings)}**")
     if fuzz_findings:
         extra_md.append(f"- Discovered endpoints: **{len(fuzz_findings)}**")
+    if cloud_findings:
+        extra_md.append(f"- Cloud storage references: **{len(cloud_findings)}**")
+    if asn_findings:
+        extra_md.append(f"- Network ranges mapped: **{len(asn_findings)}**")
+    if header_findings:
+        extra_md.append(f"- Audited HTTP endpoints: **{len(header_findings)}**")
+    if cname_findings:
+        extra_md.append(f"- External service CNAMEs: **{len(cname_findings)}**")
 
     build_markdown_report(args.domain, output_dir, subdomains, live_hosts, extra_md)
 
@@ -268,23 +348,38 @@ def main():
             "vulnerabilities": vuln_findings,
             "secrets": secret_findings,
             "endpoints": fuzz_findings,
+            "cloud_assets": cloud_findings,
+            "asn_ranges": asn_findings,
+            "headers_audit": header_findings,
+            "cname_audit": cname_findings,
         }, indent=2), encoding="utf-8")
 
     if args.html:
         report.build_html_report(
             args.domain, output_dir, subdomains, live_hosts,
-            ports_by_host, vuln_findings, secret_findings, fuzz_findings,
-            len(urls), len(params),
+            ports_by_host=ports_by_host,
+            vuln_findings=vuln_findings,
+            secret_findings=secret_findings,
+            fuzz_findings=fuzz_findings,
+            url_count=len(urls),
+            param_count=len(params),
+            cloud_findings=cloud_findings,
+            cname_findings=cname_findings,
         )
 
     if args.notify:
-        notify.send_webhook(args.notify, args.domain, {
+        stats_dict = {
             "Subdomains": len(subdomains),
             "Live hosts": len(live_hosts),
             "Vuln findings": len(vuln_findings),
             "Potential secrets": len(secret_findings),
             "Endpoints": len(fuzz_findings),
-        })
+        }
+        if cloud_findings:
+            stats_dict["Cloud assets"] = len(cloud_findings)
+        if cname_findings:
+            stats_dict["Service CNAMEs"] = len(cname_findings)
+        notify.send_webhook(args.notify, args.domain, stats_dict)
 
     print(f"[+] Report saved to {output_dir / 'report.md'}")
 

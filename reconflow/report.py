@@ -98,14 +98,42 @@ def _endpoints_table(findings):
     return "<table><tr><th>Status</th><th>URL</th><th>Length</th></tr>" + "".join(rows) + "</table>"
 
 
+def _cloud_assets_table(findings):
+    if not findings:
+        return "<p>No external cloud storage references identified.</p>"
+    rows = [
+        f"<tr><td><code>{f.get('provider')}</code></td>"
+        f"<td><code>{f.get('asset')}</code></td></tr>"
+        for f in findings
+    ]
+    return "<table><tr><th>Provider</th><th>Asset Endpoint</th></tr>" + "".join(rows) + "</table>"
+
+
+def _cname_table(findings):
+    if not findings:
+        return "<p>No external service CNAME records flagged.</p>"
+    rows = [
+        f"<tr><td><code>{f.get('subdomain')}</code></td>"
+        f"<td><code>{f.get('cname')}</code></td>"
+        f"<td>{f.get('provider')}</td>"
+        f"<td>{'Active' if f.get('active_dns') else 'Unresolved (Check Record)'}</td></tr>"
+        for f in findings
+    ]
+    return ("<table><tr><th>Subdomain</th><th>CNAME Target</th><th>Service</th>"
+            "<th>DNS Status</th></tr>" + "".join(rows) + "</table>")
+
+
 def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
                       ports_by_host=None, vuln_findings=None,
                       secret_findings=None, fuzz_findings=None,
-                      url_count=0, param_count=0):
+                      url_count=0, param_count=0,
+                      cloud_findings=None, cname_findings=None):
     ports_by_host = ports_by_host or {}
     vuln_findings = vuln_findings or []
     secret_findings = secret_findings or []
     fuzz_findings = fuzz_findings or []
+    cloud_findings = cloud_findings or []
+    cname_findings = cname_findings or []
 
     stats = "".join([
         _stat("subdomains", len(subdomains)),
@@ -116,6 +144,8 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
         _stat("vuln findings", len(vuln_findings)),
         _stat("potential secrets", len(secret_findings)),
         _stat("discovered endpoints", len(fuzz_findings)),
+        _stat("cloud assets", len(cloud_findings)),
+        _stat("service CNAMEs", len(cname_findings)),
     ])
 
     sections = f"""
@@ -127,6 +157,10 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
 {_endpoints_table(fuzz_findings)}
 <h2>Leaked Secrets (JS scan)</h2>
 {_secrets_table(secret_findings)}
+<h2>Cloud Storage References</h2>
+{_cloud_assets_table(cloud_findings)}
+<h2>Service CNAME Records</h2>
+{_cname_table(cname_findings)}
 """
 
     html = HTML_TEMPLATE.format(domain=domain, summary_stats=stats, sections=sections)

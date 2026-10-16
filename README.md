@@ -15,9 +15,13 @@ Subdomain discovery, live host probing, port scanning, historical URLs, vulnerab
 5. Scans live hosts for vulnerabilities and misconfigurations (`nuclei`)
 6. Scans discovered JS files for leaked API keys, tokens, and secrets
 7. Fuzzes common files and sensitive endpoints (`ffuf`)
-8. Streams progress to disk so interrupted scans can be safely resumed (`--resume`)
-9. Generates summary reports (`report.md`, `report.json`, and severity-colored `report.html`)
-10. Posts completion alerts to Discord or Slack webhooks
+8. Audits defensive cloud storage references (AWS S3, GCP, Azure Blob)
+9. Maps network ASN and IP CIDR ranges via public RDAP
+10. Audits HTTP response headers and permissive CORS policies
+11. Inspects DNS CNAME records for external cloud service dependencies
+12. Streams progress to disk so interrupted scans can be safely resumed (`--resume`)
+13. Generates summary reports (`report.md`, `report.json`, and severity-colored `report.html`)
+14. Posts completion alerts to Discord or Slack webhooks
 
 ## Requirements
 
@@ -84,7 +88,12 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `--secrets` | Scan discovered JS files for leaked API keys / tokens / JWTs |
 | `--fuzz` | Fuzz endpoints and portals on live hosts with ffuf |
 | `--wordlist` | Custom wordlist path for ffuf (default: built-in common list) |
-| `--full` | Shortcut for `--ports --urls --vuln --secrets --fuzz --html` |
+| `--audit` | Run all defensive asset audits (cloud, ASN, headers, CNAME) |
+| `--cloud-assets` | Detect cloud storage bucket references in discovered URLs and hosts |
+| `--asn` | Map network ASN and IP ranges for live hosts via RDAP |
+| `--headers` | Audit HTTP security headers and CORS configurations |
+| `--cname-check` | Audit DNS CNAME records for external cloud service dependencies |
+| `--full` | Shortcut for all discovery stages, audits, and HTML report |
 | `--html` | Also build a severity-colored HTML report (`report.html`) |
 | `--notify URL` | Post a run summary to a Discord/Slack-compatible webhook on finish |
 
@@ -139,19 +148,23 @@ notify:
 Files created in `output/<domain>/`:
 
 ```
-state.json       run progress and metadata (enables --resume)
-subdomains.txt   all discovered subdomains
-live.txt         live hosts with status code, title, tech
-urls.txt         collected URLs (when using --urls or --full)
-params.txt       unique query parameters (when using --urls or --full)
-ports.json       open port mappings (when using --ports or --full)
-vulns.json       nuclei vulnerability findings (when using --vuln or --full)
-secrets.json     extracted secret matches (when using --secrets or --full)
-fuzz.json        discovered endpoint paths (when using --fuzz or --full)
-report.md        summary Markdown report
-report.json      structured JSON report (when using --json)
-report.html      severity-colored HTML dashboard (when using --html or --full)
-screenshots/     captured screenshots of live hosts (when using --screenshots)
+state.json         run progress and metadata (enables --resume)
+subdomains.txt     all discovered subdomains
+live.txt           live hosts with status code, title, tech
+urls.txt           collected URLs (when using --urls or --full)
+params.txt         unique query parameters (when using --urls or --full)
+ports.json         open port mappings (when using --ports or --full)
+vulns.json         nuclei vulnerability findings (when using --vuln or --full)
+secrets.json       extracted secret matches (when using --secrets or --full)
+fuzz.json          discovered endpoint paths (when using --fuzz or --full)
+cloud_assets.json  discovered cloud storage bucket endpoints (when using --audit)
+asn_ranges.json    network ASN & IP ranges mapped via RDAP (when using --audit)
+headers_audit.json HTTP security headers & CORS audit (when using --audit)
+cname_audit.json   external service CNAME records (when using --audit)
+report.md          summary Markdown report
+report.json        structured JSON report (when using --json)
+report.html        severity-colored HTML dashboard (when using --html or --full)
+screenshots/       captured screenshots of live hosts (when using --screenshots)
 ```
 
 ## Known limitations
@@ -175,6 +188,10 @@ screenshots/     captured screenshots of live hosts (when using --screenshots)
 - [x] Config file for API keys & default flags (`reconflow.yaml`)
 - [x] Directory/endpoint fuzzing (`ffuf` integration)
 - [x] Docker image for zero-install usage
+- [x] Public cloud storage & S3 bucket reference detection
+- [x] Network ASN and IP range mapping via RDAP
+- [x] HTTP security header and CORS configuration audits
+- [x] DNS CNAME external service provider validation
 
 ## Contributing
 
