@@ -86,12 +86,26 @@ def _ports_table(ports_by_host):
     return "<table><tr><th>Host</th><th>Open ports</th></tr>" + "".join(rows) + "</table>"
 
 
+def _endpoints_table(findings):
+    if not findings:
+        return "<p>No endpoints discovered (or fuzzing stage skipped).</p>"
+    rows = [
+        f"<tr><td><code>{f.get('status')}</code></td>"
+        f"<td><code>{f.get('url')}</code></td>"
+        f"<td>{f.get('length')} bytes</td></tr>"
+        for f in findings
+    ]
+    return "<table><tr><th>Status</th><th>URL</th><th>Length</th></tr>" + "".join(rows) + "</table>"
+
+
 def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
                       ports_by_host=None, vuln_findings=None,
-                      secret_findings=None, url_count=0, param_count=0):
+                      secret_findings=None, fuzz_findings=None,
+                      url_count=0, param_count=0):
     ports_by_host = ports_by_host or {}
     vuln_findings = vuln_findings or []
     secret_findings = secret_findings or []
+    fuzz_findings = fuzz_findings or []
 
     stats = "".join([
         _stat("subdomains", len(subdomains)),
@@ -101,6 +115,7 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
         _stat("unique params", param_count),
         _stat("vuln findings", len(vuln_findings)),
         _stat("potential secrets", len(secret_findings)),
+        _stat("discovered endpoints", len(fuzz_findings)),
     ])
 
     sections = f"""
@@ -108,6 +123,8 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
 {_vuln_table(vuln_findings)}
 <h2>Open Ports (naabu)</h2>
 {_ports_table(ports_by_host)}
+<h2>Discovered Endpoints (ffuf)</h2>
+{_endpoints_table(fuzz_findings)}
 <h2>Leaked Secrets (JS scan)</h2>
 {_secrets_table(secret_findings)}
 """

@@ -1,0 +1,23 @@
+# reconflow configuration file
+# Copy this file to reconflow.yaml or ~/.config/reconflow/reconflow.yaml
+
+defaults:
+  threads: 50
+  timeout: 10
+  top_ports: 100
+  severity: "medium,high,critical"
+
+# Subfinder API keys for external threat intelligence providers
+# (Helps find significantly more subdomains on large bug bounty targets)
+subfinder_keys:
+  virustotal: ""
+  securitytrails: ""
+  shodan: ""
+  chaos: ""
+  censys: ""
+  github: ""
+
+# Notification endpoints
+notify:
+  # Discord or Slack webhook URL
+  webhook_url: ""

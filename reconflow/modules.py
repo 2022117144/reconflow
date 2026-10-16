@@ -165,3 +165,54 @@ def secret_scan(urls, output_dir: Path, timeout: int = 8):
     suffix = " — review secrets.json" if findings else ""
     print(f"[+] Found {len(findings)} potential secret(s){suffix}")
     return findings
+
+
+# ------------------------------------------------------------- fuzzing ----
+
+DEFAULT_WORDLIST = Path(__file__).resolve().parent / "wordlists" / "common.txt"
+
+
+def dir_fuzz(live_hosts, output_dir: Path, wordlist: str = None, threads: int = 40,
+             max_hosts: int = 15):
+    """Run ffuf against live hosts to discover common files, portals, and endpoints."""
+    if _tool_missing("ffuf"):
+        return []
+
+    wl_path = Path(wordlist) if wordlist else DEFAULT_WORDLIST
+    if not wl_path.exists():
+        print(f"[!] Wordlist '{wl_path}' not found — skipping fuzzing.")
+        return []
+
+    hosts_to_scan = live_hosts[:max_hosts]
+    print(f"[*] Fuzzing endpoints across {len(hosts_to_scan)} live hosts with ffuf...")
+
+    all_findings = []
+    for host in hosts_to_scan:
+        clean_host = host.rstrip("/")
+        tmp_out = output_dir / f"ffuf_{len(all_findings)}.json"
+        cmd = [
+            "ffuf", "-u", f"{clean_host}/FUZZ",
+            "-w", str(wl_path),
+            "-mc", "200,204,301,302,307,401,403",
+            "-t", str(threads),
+            "-of", "json", "-o", str(tmp_out), "-s",
+        ]
+        subprocess.run(cmd, capture_output=True, text=True)
+        if tmp_out.exists():
+            try:
+                data = json.loads(tmp_out.read_text(encoding="utf-8"))
+                for res in data.get("results", []):
+                    all_findings.append({
+                        "url": res.get("url"),
+                        "status": res.get("status"),
+                        "length": res.get("length"),
+                    })
+                tmp_out.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    out_file = output_dir / "fuzz.json"
+    out_file.write_text(json.dumps(all_findings, indent=2), encoding="utf-8")
+    print(f"[+] ffuf discovered {len(all_findings)} endpoints")
+    return all_findings
+
