@@ -15,11 +15,13 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
+from reconflow.platform_check import get_install_hint
+
 
 def _tool_missing(name: str) -> bool:
     if shutil.which(name) is None:
-        print(f"[!] '{name}' not found on PATH — skipping this stage. "
-              f"Install it to enable this feature.")
+        hint = get_install_hint(name)
+        print(f"[!] '{name}' not found on PATH — skipping this stage. {hint}")
         return True
     return False
 

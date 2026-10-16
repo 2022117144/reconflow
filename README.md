@@ -49,6 +49,17 @@ git clone https://github.com/ErenYeager1836/reconflow.git
 cd reconflow
 ```
 
+### Arch Linux / BlackArch Setup
+
+If you are running Arch Linux or BlackArch, use the automated setup script to install the complete toolchain in one command:
+
+```bash
+chmod +x scripts/setup-archlinux.sh
+./scripts/setup-archlinux.sh
+```
+
+reconflow also detects Arch/BlackArch at runtime and provides native `pacman` installation commands whenever an optional tool is missing.
+
 ## Usage
 
 ```bash
