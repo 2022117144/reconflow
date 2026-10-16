@@ -132,6 +132,10 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `--waf` | Fingerprint Web Application Firewalls (Cloudflare, AWS, Akamai, etc.) |
 | `--sitemap` | Harvest routes from `/robots.txt` and `/sitemap.xml` across live hosts |
 | `--email-security` | Audit domain SPF and DMARC DNS policies for email spoofing |
+| `--js-endpoints` | Extract hidden REST routes, GraphQL operations, and internal query parameters from client JS |
+| `--dns-sec` | Audit DNSSEC signature validity, RFC 6844 CAA policies, and detect dangling nameservers (NS takeover) |
+| `--cache-audit` | Audit CDN edge caching policies for Web Cache Deception & unkeyed header reflection |
+| `--param-miner` | Classify discovered URL query parameters into high-value bug bounty attack surface matrices |
 | `--diff` | Highlight new subdomains, live hosts, and newly opened ports vs previous run |
 | `--full` | Shortcut for all discovery stages, audits, CT logs, diff, SARIF, AXFR, and HTML report |
 | `--html` | Also build a severity-colored HTML report (`report.html`) |

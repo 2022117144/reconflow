@@ -22,12 +22,16 @@ from pathlib import Path
 from reconflow import (
     audits,
     batch,
+    cache_audit,
     config,
     cve_correlate,
+    dns_sec,
     github_leaks,
+    js_endpoints,
     jwt_analyzer,
     modules,
     notify,
+    params_analyzer,
     passive_lookup,
     permute_scale,
     report,
@@ -196,6 +200,14 @@ def main():
                     help="analyze JWT tokens found in a text file")
     ap.add_argument("--jwt-audit", action="store_true",
                     help="extract and audit all JWT tokens found in JS secrets and endpoints")
+    ap.add_argument("--js-endpoints", action="store_true",
+                    help="extract API routes, REST endpoints, and GraphQL ops from JS bundles")
+    ap.add_argument("--dns-sec", action="store_true",
+                    help="audit DNSSEC, CAA records, and authoritative nameserver delegation")
+    ap.add_argument("--cache-audit", action="store_true",
+                    help="audit Web Cache Deception & CDN edge caching policies")
+    ap.add_argument("--param-miner", action="store_true",
+                    help="classify discovered parameters into high-value vulnerability matrices")
     ap.add_argument("--full", action="store_true",
                     help="shortcut for all discovery stages, audits, and HTML report")
     ap.add_argument("--html", action="store_true", help="also build an HTML report")
@@ -234,6 +246,10 @@ def main():
         args.sarif = True
         args.zone_transfer = True
         args.jwt_audit = True
+        args.js_endpoints = True
+        args.dns_sec = True
+        args.cache_audit = True
+        args.param_miner = True
 
     if args.audit:
         args.cloud_assets = args.asn = args.headers = args.cname_check = True
@@ -241,6 +257,8 @@ def main():
         args.ssl_audit = args.favicon = args.security_txt = args.security_headers = True
         args.zone_transfer = True
         args.jwt_audit = True
+        args.dns_sec = True
+        args.cache_audit = True
 
     if args.targets_file:
         targets = batch.load_targets(args.targets_file)
@@ -364,6 +382,10 @@ def run_pipeline(domain: str, args) -> dict:
     ssl_findings, favicon_findings, security_grades = [], [], []
     security_txt = {}
     shodan_findings = []
+    js_endpoints_data = {}
+    dns_sec_data = {}
+    cache_audit_data = []
+    param_matrix_data = {}
 
     # Stage: Passive OSINT Lookups (Shodan InternetDB, optional Censys)
     if args.passive and live_hosts:
@@ -473,6 +495,47 @@ def run_pipeline(domain: str, args) -> dict:
             jwt_findings = jwt_analyzer.audit_jwts(jwt_tokens, output_dir, domain=domain)
             sm.mark_completed("jwt_analysis", {"audited": len(jwt_findings)})
 
+    # Stage: JavaScript Endpoint & API Route Extractor
+    if getattr(args, "js_endpoints", False):
+        if sm.is_completed("js_endpoints") and (output_dir / "js_endpoints.json").exists():
+            print(f"[*] Resuming: loading JS endpoints from {output_dir / 'js_endpoints.json'}")
+            try:
+                js_endpoints_data = json.loads(
+                    (output_dir / "js_endpoints.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                js_source = urls if urls else live_hosts
+                js_endpoints_data = js_endpoints.extract_js_endpoints(
+                    js_source, output_dir, domain=domain,
+                    threads=args.threads or 10, timeout=args.timeout or 7
+                )
+        else:
+            js_source = urls if urls else live_hosts
+            js_endpoints_data = js_endpoints.extract_js_endpoints(
+                js_source, output_dir, domain=domain,
+                threads=args.threads or 10, timeout=args.timeout or 7
+            )
+            sm.mark_completed("js_endpoints", {
+                "routes": js_endpoints_data.get("total_unique_routes", 0),
+                "graphql": js_endpoints_data.get("total_graphql_ops", 0),
+            })
+
+    # Stage: Parameter Attack Surface Matrix
+    if getattr(args, "param_miner", False):
+        if sm.is_completed("param_miner") and (output_dir / "param_matrix.json").exists():
+            print(f"[*] Resuming: loading parameter matrix from {output_dir / 'param_matrix.json'}")
+            try:
+                param_matrix_data = json.loads(
+                    (output_dir / "param_matrix.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                param_matrix_data = params_analyzer.analyze_parameters(params, urls, output_dir)
+        else:
+            param_matrix_data = params_analyzer.analyze_parameters(params, urls, output_dir)
+            sm.mark_completed("param_miner", {
+                "high_value": param_matrix_data.get("total_high_value_flagged", 0)
+            })
+
     # Stage 7: Directory Fuzzing (ffuf)
     if args.fuzz and live_hosts:
         if sm.is_completed("fuzz") and (output_dir / "fuzz.json").exists():
@@ -540,6 +603,29 @@ def run_pipeline(domain: str, args) -> dict:
         else:
             header_findings = audits.audit_http_headers(live_hosts, output_dir)
             sm.mark_completed("headers", {"audited_count": len(header_findings)})
+
+    # Stage: Web Cache & CDN Policy Audit
+    if getattr(args, "cache_audit", False) and live_hosts:
+        if sm.is_completed("cache_audit") and (output_dir / "cache_audit.json").exists():
+            print(f"[*] Resuming: loading cache audit from {output_dir / 'cache_audit.json'}")
+            try:
+                cache_audit_data = json.loads(
+                    (output_dir / "cache_audit.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                cache_audit_data = cache_audit.audit_cache_policies(
+                    live_hosts, output_dir,
+                    threads=args.threads or 10, timeout=args.timeout or 5
+                )
+        else:
+            cache_audit_data = cache_audit.audit_cache_policies(
+                live_hosts, output_dir,
+                threads=args.threads or 10, timeout=args.timeout or 5
+            )
+            sm.mark_completed("cache_audit", {
+                "audited": len(cache_audit_data),
+                "vulnerable": sum(1 for c in cache_audit_data if c.get("is_vulnerable")),
+            })
 
     # Stage 12: DNS CNAME Record Validation
     if args.cname_check and subdomains:

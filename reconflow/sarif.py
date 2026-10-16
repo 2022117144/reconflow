@@ -103,6 +103,51 @@ RULES = {
         "defaultConfiguration": {"level": "warning"},
         "properties": {"tags": ["security", "cve", "known-vulnerabilities"]},
     },
+    "RF-DANGLING-NS": {
+        "name": "DanglingNameserverDelegation",
+        "shortDescription": {"text": "Authoritative nameserver is unresolvable or dangling"},
+        "fullDescription": {
+            "text": "A nameserver assigned to the domain fails to resolve or belongs to an unassigned cloud DNS tenant, creating a full domain takeover risk."
+        },
+        "defaultConfiguration": {"level": "error"},
+        "properties": {"tags": ["security", "dns", "nameserver", "takeover"]},
+    },
+    "RF-DNSSEC-MISSING": {
+        "name": "DnssecMissingOrUnsigned",
+        "shortDescription": {"text": "DNSSEC is not enabled or zone is unsigned"},
+        "fullDescription": {
+            "text": "The domain lacks DNSSEC records, making DNS responses susceptible to cache poisoning and spoofing."
+        },
+        "defaultConfiguration": {"level": "note"},
+        "properties": {"tags": ["security", "dns", "dnssec"]},
+    },
+    "RF-CAA-MISSING": {
+        "name": "CaaRecordMissing",
+        "shortDescription": {"text": "CAA record missing (unrestricted certificate issuance)"},
+        "fullDescription": {
+            "text": "The domain lacks RFC 6844 CAA records, allowing any CA in the WebPKI to issue certificates."
+        },
+        "defaultConfiguration": {"level": "note"},
+        "properties": {"tags": ["security", "dns", "caa", "pki"]},
+    },
+    "RF-CACHE-SENSITIVE-PUBLIC": {
+        "name": "WebCacheDeceptionSensitiveDataPublic",
+        "shortDescription": {"text": "Sensitive cookies or authentication data allowed in public cache"},
+        "fullDescription": {
+            "text": "The HTTP response includes Set-Cookie or auth data while Cache-Control allows public caching."
+        },
+        "defaultConfiguration": {"level": "error"},
+        "properties": {"tags": ["security", "cache", "web-cache-deception", "cdn"]},
+    },
+    "RF-UNKEYED-HEADER-REFLECTION": {
+        "name": "UnkeyedHeaderReflection",
+        "shortDescription": {"text": "Unkeyed header reflected in HTTP response"},
+        "fullDescription": {
+            "text": "Headers like X-Forwarded-Host are reflected in response headers, creating potential web cache poisoning vectors."
+        },
+        "defaultConfiguration": {"level": "warning"},
+        "properties": {"tags": ["security", "cache", "cache-poisoning", "headers"]},
+    },
 }
 
 
@@ -240,6 +285,55 @@ def generate_sarif(domain: str, output_dir: Path, findings_dict: dict) -> dict:
                     "text": f"Known CVE {c.get('cve_id')} for {tech}: {c.get('description')}"
                 },
                 "locations": _make_location(domain),
+            })
+
+    # 9. DNS Security (DNSSEC, CAA, Dangling NS)
+    dns_sec = findings_dict.get("dns_sec", {})
+    if dns_sec:
+        dnssec_data = dns_sec.get("dnssec", {})
+        if dnssec_data.get("status") in ["UNSIGNED", "MISCONFIGURED"]:
+            results.append({
+                "ruleId": "RF-DNSSEC-MISSING",
+                "level": "note",
+                "message": {
+                    "text": f"DNSSEC status for {domain}: {dnssec_data.get('status')} - {dnssec_data.get('description')}"
+                },
+                "locations": _make_location(domain),
+            })
+        caa_data = dns_sec.get("caa", {})
+        if caa_data and not caa_data.get("has_caa"):
+            results.append({
+                "ruleId": "RF-CAA-MISSING",
+                "level": "note",
+                "message": {
+                    "text": f"Domain {domain} lacks CAA record: any CA in the WebPKI can issue valid certificates"
+                },
+                "locations": _make_location(domain),
+            })
+        ns_data = dns_sec.get("nameservers", {})
+        for dns_item in ns_data.get("dangling_nameservers", []):
+            results.append({
+                "ruleId": "RF-DANGLING-NS",
+                "level": "error",
+                "message": {
+                    "text": f"Dangling nameserver delegation on {domain}: {dns_item.get('nameserver')} failed to resolve ({dns_item.get('error')})"
+                },
+                "locations": _make_location(domain),
+            })
+
+    # 10. Web Cache & CDN Policy Findings
+    for cache_item in findings_dict.get("cache_audits", []):
+        target_u = cache_item.get("url") or domain
+        for f in cache_item.get("findings", []):
+            rule_id = "RF-CACHE-SENSITIVE-PUBLIC" if f.get("type") == "SENSITIVE_DATA_PUBLIC_CACHE" else "RF-UNKEYED-HEADER-REFLECTION"
+            lvl = "error" if f.get("severity") == "CRITICAL" else "warning"
+            results.append({
+                "ruleId": rule_id,
+                "level": lvl,
+                "message": {
+                    "text": f"{f.get('description')} at {target_u}"
+                },
+                "locations": _make_location(target_u),
             })
 
     rule_list = [{"id": k, **v} for k, v in RULES.items()]

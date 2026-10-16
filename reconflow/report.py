@@ -336,6 +336,108 @@ def _jwt_table(findings):
     )
 
 
+def _js_endpoints_section(js_data):
+    if not js_data or not js_data.get("all_routes"):
+        return "<p>No JavaScript API endpoints extracted (or stage skipped).</p>"
+    cats = js_data.get("categorized_routes", {})
+    badges = []
+    if cats.get("admin_internal"):
+        badges.append(f"<span class='badge' style='background:#ef4444;'>{len(cats['admin_internal'])} Admin/Internal</span>")
+    if cats.get("auth_oauth"):
+        badges.append(f"<span class='badge' style='background:#f97316;'>{len(cats['auth_oauth'])} Auth/OAuth</span>")
+    if cats.get("graphql"):
+        badges.append(f"<span class='badge' style='background:#8b5cf6;'>{len(cats['graphql'])} GraphQL</span>")
+    if cats.get("api_rest"):
+        badges.append(f"<span class='badge' style='background:#3b82f6;'>{len(cats['api_rest'])} REST API</span>")
+
+    summary_html = " ".join(badges) or "<span>Endpoints discovered</span>"
+
+    rows = []
+    # Show high priority routes first
+    prioritized = cats.get("admin_internal", []) + cats.get("auth_oauth", []) + cats.get("graphql", []) + cats.get("api_rest", [])[:20]
+    for r in prioritized[:30]:
+        rows.append(f"<tr><td><code>{r}</code></td></tr>")
+
+    return (
+        f"<p>{summary_html}</p>"
+        "<table><tr><th>Sample Extracted Route / Endpoint</th></tr>" + "".join(rows) + "</table>"
+    )
+
+
+def _dns_sec_card(dns_data):
+    if not dns_data:
+        return "<p>DNS infrastructure audit not performed.</p>"
+    dnssec = dns_data.get("dnssec", {})
+    caa = dns_data.get("caa", {})
+    ns = dns_data.get("nameservers", {})
+
+    status = dnssec.get("status", "UNKNOWN")
+    ds_color = "#10b981" if status == "SIGNED" else ("#ef4444" if status == "MISCONFIGURED" else "#f59e0b")
+    caa_status = caa.get("status", "UNKNOWN")
+    caa_color = "#10b981" if caa_status == "PROTECTED" else "#6b7280"
+
+    dangling_warn = ""
+    if ns.get("has_dangling_ns"):
+        dangling_warn = (
+            f"<div style='color:#ef4444;font-weight:bold;margin-top:8px;'>"
+            f"⚠️ ALERT: {len(ns.get('dangling_nameservers', []))} dangling/unresolvable nameserver(s) detected!</div>"
+        )
+
+    return f"""
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
+      <p><b>DNSSEC:</b> <span class="badge" style="background:{ds_color};">{status}</span> &mdash; {dnssec.get('description', '')}</p>
+      <p><b>CAA Records (RFC 6844):</b> <span class="badge" style="background:{caa_color};">{caa_status}</span> &mdash; {caa.get('summary', '')}</p>
+      <p><b>Nameservers:</b> {ns.get('nameservers_count', 0)} delegations ({', '.join(ns.get('nameservers', []))})</p>
+      {dangling_warn}
+    </div>
+    """
+
+
+def _cache_audit_table(findings):
+    if not findings:
+        return "<p>No Web Cache or CDN audit findings.</p>"
+    rows = []
+    for f in findings:
+        cdn = f.get("cdn_detected") or "None / Origin"
+        cc = f.get("cache_control") or "none"
+        issues = []
+        for issue in f.get("findings", []):
+            color = "#ef4444" if issue.get("severity") == "CRITICAL" else "#f59e0b"
+            issues.append(f"<span style='color:{color};font-weight:bold;'>[{issue.get('severity')}]</span> {issue.get('type')}")
+        issues_str = "<br>".join(issues) if issues else "<span style='color:#10b981;'>Clean</span>"
+        rows.append(
+            f"<tr><td><code>{f.get('url')}</code></td>"
+            f"<td>{cdn}</td>"
+            f"<td><code>{cc[:40]}</code></td>"
+            f"<td>{issues_str}</td></tr>"
+        )
+    return (
+        "<table><tr><th>URL</th><th>CDN Detected</th><th>Cache-Control</th>"
+        "<th>Security Observations</th></tr>" + "".join(rows) + "</table>"
+    )
+
+
+def _param_matrix_table(matrix_data):
+    if not matrix_data or not matrix_data.get("categories"):
+        return "<p>No parameters analyzed.</p>"
+    cats = matrix_data.get("categories", {})
+    rows = []
+    for cat_key, cat in cats.items():
+        cnt = cat.get("params_count", 0)
+        if cnt == 0:
+            continue
+        sample_params = ", ".join(f"<code>{p['name']}</code>" for p in cat.get("matched_params", [])[:10])
+        rows.append(
+            f"<tr><td><b>{cat.get('label')}</b><br><small style='color:#6b7280;'>{cat.get('description')}</small></td>"
+            f"<td><b>{cnt}</b></td>"
+            f"<td>{sample_params}</td></tr>"
+        )
+    return (
+        "<table><tr><th>Attack Surface Category</th><th>Matched Params</th>"
+        "<th>Sample Parameters</th></tr>" + "".join(rows) + "</table>"
+    )
+
+
 def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
                       ports_by_host=None, vuln_findings=None,
                       secret_findings=None, fuzz_findings=None,
@@ -347,7 +449,9 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
                       ssl_findings=None, favicon_findings=None,
                       security_grades=None, security_txt=None,
                       permutation_count=0, zone_transfer=None,
-                      jwt_findings=None):
+                      jwt_findings=None, js_endpoints=None,
+                      dns_sec=None, cache_audits=None,
+                      param_matrix=None):
     ports_by_host = ports_by_host or {}
     vuln_findings = vuln_findings or []
     secret_findings = secret_findings or []
@@ -381,10 +485,21 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
         _stat("permutations", permutation_count),
         _stat("nameservers", len(zone_transfer)),
         _stat("JWTs audited", len(jwt_findings)),
+        _stat("JS routes", js_endpoints.get("total_unique_routes", 0) if js_endpoints else 0),
+        _stat("cache audited", len(cache_audits) if cache_audits else 0),
+        _stat("high-value params", param_matrix.get("total_high_value_flagged", 0) if param_matrix else 0),
     ])
 
     sections = f"""
 {_diff_section(diff_data)}
+<h2>DNS Infrastructure & Security Posture (DNSSEC & CAA)</h2>
+{_dns_sec_card(dns_sec)}
+<h2>High-Value Parameter Attack Surface Matrix</h2>
+{_param_matrix_table(param_matrix)}
+<h2>JavaScript API Routes & Endpoints</h2>
+{_js_endpoints_section(js_endpoints)}
+<h2>Web Cache & CDN Edge Policy Audit</h2>
+{_cache_audit_table(cache_audits)}
 <h2>Defensive HTTP Security Header Grades</h2>
 {_security_grades_table(security_grades)}
 <h2>Vulnerabilities (nuclei)</h2>
