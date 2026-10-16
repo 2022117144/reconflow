@@ -220,7 +220,7 @@ def main():
     # Stage 7: Directory Fuzzing (ffuf)
     if args.fuzz and live_hosts:
         if sm.is_completed("fuzz") and (output_dir / "fuzz.json").exists():
-            print(f"[*] Resuming: loading fuzzing results from {output_dir / "fuzz.json"}")
+            print(f"[*] Resuming: loading fuzzing results from {output_dir / 'fuzz.json'}")
             try:
                 fuzz_findings = json.loads(
                     (output_dir / "fuzz.json").read_text(encoding="utf-8")
