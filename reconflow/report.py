@@ -293,6 +293,49 @@ def _security_txt_card(data):
     )
 
 
+def _zone_transfer_card(findings):
+    if not findings:
+        return "<p>No DNS zone transfer audit performed.</p>"
+    rows = []
+    for f in findings:
+        vuln = f.get("vulnerable")
+        color = "#ef4444" if vuln else "#10b981"
+        status_text = "VULNERABLE (AXFR Open)" if vuln else f.get("status", "Secure")
+        rows.append(
+            f"<tr><td><code>{f.get('nameserver')}</code></td>"
+            f"<td><code>{f.get('ip') or 'N/A'}</code></td>"
+            f"<td style='color:{color};font-weight:bold;'>{status_text}</td>"
+            f"<td>{f.get('records_count', 0)}</td></tr>"
+        )
+    return (
+        "<table><tr><th>Nameserver</th><th>IP</th><th>Status</th>"
+        "<th>Records Leaked</th></tr>" + "".join(rows) + "</table>"
+    )
+
+
+def _jwt_table(findings):
+    if not findings:
+        return "<p>No JWT security flaws detected.</p>"
+    risk_colors = {
+        "CRITICAL": "#ef4444", "HIGH": "#f97316", "MEDIUM": "#f59e0b",
+        "LOW": "#3b82f6", "CLEAN": "#10b981", "INFO": "#6b7280"
+    }
+    rows = []
+    for f in findings:
+        color = risk_colors.get(f.get("risk_level"), "#9ca3af")
+        vuln_desc = "; ".join(v.get("title") for v in f.get("vulnerabilities", [])) or "None"
+        rows.append(
+            f"<tr><td><code>{f.get('token_preview')}</code></td>"
+            f"<td><code>{f.get('algorithm') or 'None'}</code></td>"
+            f"<td style='color:{color};font-weight:bold;'>{f.get('risk_level')}</td>"
+            f"<td>{vuln_desc}</td></tr>"
+        )
+    return (
+        "<table><tr><th>Token Preview</th><th>Algorithm</th><th>Risk Level</th>"
+        "<th>Vulnerabilities Detected</th></tr>" + "".join(rows) + "</table>"
+    )
+
+
 def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
                       ports_by_host=None, vuln_findings=None,
                       secret_findings=None, fuzz_findings=None,
@@ -303,7 +346,8 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
                       route_count=0,
                       ssl_findings=None, favicon_findings=None,
                       security_grades=None, security_txt=None,
-                      permutation_count=0):
+                      permutation_count=0, zone_transfer=None,
+                      jwt_findings=None):
     ports_by_host = ports_by_host or {}
     vuln_findings = vuln_findings or []
     secret_findings = secret_findings or []
@@ -315,6 +359,8 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
     ssl_findings = ssl_findings or []
     favicon_findings = favicon_findings or []
     security_grades = security_grades or []
+    zone_transfer = zone_transfer or []
+    jwt_findings = jwt_findings or []
 
     stats = "".join([
         _stat("subdomains", len(subdomains)),
@@ -333,6 +379,8 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
         _stat("SSL audited", len(ssl_findings)),
         _stat("favicon tech", sum(1 for f in favicon_findings if f.get("matched"))),
         _stat("permutations", permutation_count),
+        _stat("nameservers", len(zone_transfer)),
+        _stat("JWTs audited", len(jwt_findings)),
     ])
 
     sections = f"""
@@ -347,6 +395,10 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
 {_endpoints_table(fuzz_findings)}
 <h2>Leaked Secrets (JS scan)</h2>
 {_secrets_table(secret_findings)}
+<h2>JSON Web Token (JWT) Security Analysis</h2>
+{_jwt_table(jwt_findings)}
+<h2>DNS Zone Transfer (AXFR) Posture</h2>
+{_zone_transfer_card(zone_transfer)}
 <h2>Exposed Sensitive Files & Dev Artifacts</h2>
 {_sensitive_files_table(sensitive_findings)}
 <h2>SSL / TLS Certificate Audit</h2>

@@ -146,7 +146,10 @@ def capture_screenshots(live_hosts, screenshots_dir):
     print("[*] Capturing screenshots of live hosts with gowitness...")
     urls_file = screenshots_dir / ".targets.txt"
     urls_file.write_text("\n".join(urls) + "\n", encoding="utf-8")
-    cmd = ["gowitness", "scan", "file", "-f", str(urls_file), "--screenshot-path", str(screenshots_dir)]
+    cmd = [
+        "gowitness", "scan", "file", "-f", str(urls_file),
+        "--screenshot-path", str(screenshots_dir)
+    ]
     run(cmd)
     try:
         urls_file.unlink(missing_ok=True)
@@ -157,7 +160,8 @@ def capture_screenshots(live_hosts, screenshots_dir):
     return images
 
 
-def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0, hosts_data=None, screenshots=None):
+def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0,
+                 hosts_data=None, screenshots=None):
     report = out_dir / "report.md"
     warning = ""
     if wildcard_ips:
@@ -167,7 +171,9 @@ def write_report(domain, subs, live, out_dir, wildcard_ips=None, dropped=0, host
         )
     screenshot_section = ""
     if screenshots:
-        screenshot_section = f"## Screenshots\n\nCaptured {len(screenshots)} screenshot(s) in `screenshots/`.\n\n"
+        screenshot_section = (
+            f"## Screenshots\n\nCaptured {len(screenshots)} screenshot(s) in `screenshots/`.\n\n"
+        )
     report.write_text(
         f"# reconflow report: {domain}\n\n"
         f"Generated: {datetime.now():%Y-%m-%d %H:%M}\n\n"
@@ -228,7 +234,8 @@ def main():
         wildcard_ips = detect_wildcard(args.domain)
         dropped = 0
         if wildcard_ips:
-            print(f"[!] Wildcard DNS detected: random names resolve to {', '.join(sorted(wildcard_ips))}")
+            ips_str = ', '.join(sorted(wildcard_ips))
+            print(f"[!] Wildcard DNS detected: random names resolve to {ips_str}")
             if args.keep_wildcard:
                 print("[!] --keep-wildcard set, results will not be filtered")
             else:
@@ -251,7 +258,8 @@ def main():
             if args.screenshots and live:
                 screenshots = capture_screenshots(live, out_dir / "screenshots")
 
-        write_report(args.domain, subs, live, out_dir, wildcard_ips, dropped, hosts_data, screenshots)
+        write_report(args.domain, subs, live, out_dir, wildcard_ips, dropped,
+                     hosts_data, screenshots)
     except KeyboardInterrupt:
         sys.exit("\n[!] Interrupted. Partial results (if any) are in " + str(out_dir))
 

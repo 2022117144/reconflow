@@ -21,17 +21,21 @@ from pathlib import Path
 
 from reconflow import (
     audits,
+    batch,
     config,
     cve_correlate,
     github_leaks,
+    jwt_analyzer,
     modules,
     notify,
     passive_lookup,
     permute_scale,
     report,
+    sarif,
     scope,
     state,
     takeover,
+    zone_transfer,
 )
 
 
@@ -101,7 +105,9 @@ def build_markdown_report(domain, output_dir: Path, subdomains, live_hosts, extr
 
 def main():
     ap = argparse.ArgumentParser(description="reconflow — all-in-one bug bounty recon")
-    ap.add_argument("-d", "--domain", required=True)
+    ap.add_argument("-d", "--domain", help="target root domain (e.g. example.com)")
+    ap.add_argument("-dL", "--targets-file", metavar="FILE",
+                    help="path to file with target domains, one per line (batch mode)")
     ap.add_argument("-o", "--output", default="output")
     ap.add_argument("-c", "--config", help="path to custom config file (e.g., reconflow.yaml)")
     ap.add_argument("--resume", action="store_true", help="resume an interrupted scan")
@@ -180,6 +186,16 @@ def main():
                     help="harvest and parse RFC 9116 security.txt disclosure policies")
     ap.add_argument("--security-headers", action="store_true",
                     help="grade defensive HTTP response headers (A+ to F posture score)")
+    ap.add_argument("--sarif", action="store_true",
+                    help="export findings to SARIF v2.1.0 for GitHub Code Scanning")
+    ap.add_argument("--axfr", "--zone-transfer", action="store_true", dest="zone_transfer",
+                    help="audit authoritative nameservers for open DNS zone transfer (AXFR)")
+    ap.add_argument("--jwt", metavar="TOKEN",
+                    help="analyze a specific JWT token for AppSec vulnerabilities")
+    ap.add_argument("--jwt-file", metavar="PATH",
+                    help="analyze JWT tokens found in a text file")
+    ap.add_argument("--jwt-audit", action="store_true",
+                    help="extract and audit all JWT tokens found in JS secrets and endpoints")
     ap.add_argument("--full", action="store_true",
                     help="shortcut for all discovery stages, audits, and HTML report")
     ap.add_argument("--html", action="store_true", help="also build an HTML report")
@@ -187,6 +203,9 @@ def main():
                     help="Discord/Slack webhook to ping when done")
 
     args = ap.parse_args()
+
+    if not args.domain and not args.targets_file:
+        ap.error("one of the following arguments is required: -d/--domain or -dL/--targets-file")
 
     # Load configuration file (reconflow.yaml / json)
     cfg = config.load_config(args.config)
@@ -212,16 +231,31 @@ def main():
         args.diff = True
         args.cname_check = True
         args.takeover = True
+        args.sarif = True
+        args.zone_transfer = True
+        args.jwt_audit = True
 
     if args.audit:
         args.cloud_assets = args.asn = args.headers = args.cname_check = True
         args.sensitive_files = args.waf = args.email_security = args.sitemap = True
         args.ssl_audit = args.favicon = args.security_txt = args.security_headers = True
+        args.zone_transfer = True
+        args.jwt_audit = True
 
-    output_dir = Path(args.output) / args.domain
+    if args.targets_file:
+        targets = batch.load_targets(args.targets_file)
+        if not targets:
+            sys.exit(f"[!] No valid targets found in {args.targets_file}")
+        batch.run_batch(targets, lambda d: run_pipeline(d, args), Path(args.output))
+    else:
+        run_pipeline(args.domain, args)
+
+
+def run_pipeline(domain: str, args) -> dict:
+    output_dir = Path(args.output) / domain
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    sm = state.StateManager(output_dir, args.domain, resume=args.resume)
+    sm = state.StateManager(output_dir, domain, resume=args.resume)
 
     leak_findings = []
     # Stage: GitHub Public Code Leak Search
@@ -234,11 +268,11 @@ def main():
                 )
             except Exception:
                 leak_findings = github_leaks.search_github_leaks(
-                    args.domain, output_dir, args.github_token
+                    domain, output_dir, args.github_token
                 )
         else:
             leak_findings = github_leaks.search_github_leaks(
-                args.domain, output_dir, args.github_token
+                domain, output_dir, args.github_token
             )
             sm.mark_completed("github_leaks", {"found": len(leak_findings)})
 
@@ -253,18 +287,18 @@ def main():
             scope_data = scope.load_scope(args.scope)
             subdomains, _ = scope.filter_in_scope(subdomains, scope_data, output_dir)
     else:
-        subdomains = run_subfinder(args.domain, output_dir)
+        subdomains = run_subfinder(domain, output_dir)
         if args.scope:
             scope_data = scope.load_scope(args.scope)
             subdomains, _ = scope.filter_in_scope(subdomains, scope_data, output_dir)
         if args.ct_logs:
-            ct_subs = audits.fetch_ct_subdomains(args.domain, output_dir)
+            ct_subs = audits.fetch_ct_subdomains(domain, output_dir)
             subdomains = sorted(list(set(subdomains) | set(ct_subs)))
             (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
             print(f"[+] Combined total: {len(subdomains)} unique subdomains")
         if args.alterations:
             permutation_results = audits.generate_permutations(
-                subdomains, args.domain, output_dir
+                subdomains, domain, output_dir
             )
             subdomains = sorted(list(set(subdomains) | set(permutation_results)))
             (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
@@ -275,7 +309,7 @@ def main():
             (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
         if args.perm_scale:
             perm_scale_findings = permute_scale.generate_permutations_scaled(
-                subdomains, args.domain, output_dir,
+                subdomains, domain, output_dir,
                 wordlist_path=args.perm_wordlist, max_candidates=args.perm_max,
             )
             confirmed_hosts = [r["host"] for r in perm_scale_findings if "host" in r]
@@ -371,7 +405,7 @@ def main():
                 params = [line.strip() for line in (output_dir / "params.txt")
                           .read_text(encoding="utf-8").splitlines() if line.strip()]
         else:
-            urls, params = modules.url_collect(args.domain, output_dir)
+            urls, params = modules.url_collect(domain, output_dir)
             sm.mark_completed("urls", {"urls_count": len(urls), "params_count": len(params)})
 
     # Stage 5: Vulnerability Scan
@@ -408,6 +442,36 @@ def main():
             js_source = urls if urls else live_hosts
             secret_findings = modules.secret_scan(js_source, output_dir)
             sm.mark_completed("secrets", {"secrets_count": len(secret_findings)})
+
+    jwt_findings = []
+    # Stage: JSON Web Token (JWT) Security Analysis
+    if (getattr(args, "jwt_audit", False) or getattr(args, "jwt", None)
+            or getattr(args, "jwt_file", None)):
+        if sm.is_completed("jwt_analysis") and (output_dir / "jwt_analysis.json").exists():
+            print(f"[*] Resuming: loading JWT analysis from {output_dir / 'jwt_analysis.json'}")
+            try:
+                jwt_findings = json.loads(
+                    (output_dir / "jwt_analysis.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                jwt_findings = []
+        else:
+            jwt_tokens = []
+            if getattr(args, "jwt", None):
+                jwt_tokens.append(args.jwt)
+            if getattr(args, "jwt_file", None):
+                p = Path(args.jwt_file)
+                if p.exists():
+                    jwt_tokens.extend(
+                        jwt_analyzer.extract_jwts(p.read_text(encoding="utf-8", errors="ignore"))
+                    )
+            if getattr(args, "jwt_audit", False):
+                for s in secret_findings:
+                    if s.get("type") == "JWT":
+                        jwt_tokens.extend(jwt_analyzer.extract_jwts(s.get("match", "")))
+            jwt_tokens = list(set(jwt_tokens))
+            jwt_findings = jwt_analyzer.audit_jwts(jwt_tokens, output_dir, domain=domain)
+            sm.mark_completed("jwt_analysis", {"audited": len(jwt_findings)})
 
     # Stage 7: Directory Fuzzing (ffuf)
     if args.fuzz and live_hosts:
@@ -558,14 +622,41 @@ def main():
         if sm.is_completed("email_sec") and (output_dir / "email_security.json").exists():
             print(f"[*] Resuming: loading email security from "
                   f"{output_dir / 'email_security.json'}")
+    zone_transfer_findings = []
+    # Stage: DNS Zone Transfer (AXFR) Misconfiguration
+    if getattr(args, "zone_transfer", False):
+        if sm.is_completed("zone_transfer") and (output_dir / "zone_transfer.json").exists():
+            print(f"[*] Resuming: loading zone transfer from {output_dir / 'zone_transfer.json'}")
+            try:
+                zone_transfer_findings = json.loads(
+                    (output_dir / "zone_transfer.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                zone_transfer_findings = zone_transfer.audit_zone_transfer(
+                    domain, output_dir, timeout=args.timeout or 5
+                )
+        else:
+            zone_transfer_findings = zone_transfer.audit_zone_transfer(
+                domain, output_dir, timeout=args.timeout or 5
+            )
+            sm.mark_completed("zone_transfer", {
+                "tested": len(zone_transfer_findings),
+                "vulnerable": sum(1 for z in zone_transfer_findings if z.get("vulnerable")),
+            })
+
+    # Stage 16: Email Security & DNS Governance
+    if args.email_security:
+        if sm.is_completed("email_sec") and (output_dir / "email_security.json").exists():
+            print(f"[*] Resuming: loading email security from "
+                  f"{output_dir / 'email_security.json'}")
             try:
                 email_security = json.loads(
                     (output_dir / "email_security.json").read_text(encoding="utf-8")
                 )
             except Exception:
-                email_security = audits.audit_email_security(args.domain, output_dir)
+                email_security = audits.audit_email_security(domain, output_dir)
         else:
-            email_security = audits.audit_email_security(args.domain, output_dir)
+            email_security = audits.audit_email_security(domain, output_dir)
             sm.mark_completed("email_sec", {
                 "spf": email_security.get("spf", {}).get("status"),
                 "dmarc": email_security.get("dmarc", {}).get("policy"),
@@ -574,7 +665,7 @@ def main():
     # Stage 17: Differential Recon Change Detection
     if args.diff:
         diff_data = audits.compute_differential(
-            output_dir, args.domain, subdomains, live_hosts, ports_by_host
+            output_dir, domain, subdomains, live_hosts, ports_by_host
         )
 
     # Stage 18: SSL/TLS Certificate Security Audit
@@ -614,9 +705,9 @@ def main():
                     (output_dir / "security_txt.json").read_text(encoding="utf-8")
                 )
             except Exception:
-                security_txt = audits.harvest_security_txt(args.domain, live_hosts, output_dir)
+                security_txt = audits.harvest_security_txt(domain, live_hosts, output_dir)
         else:
-            security_txt = audits.harvest_security_txt(args.domain, live_hosts, output_dir)
+            security_txt = audits.harvest_security_txt(domain, live_hosts, output_dir)
             sm.mark_completed("security_txt", {"found": security_txt.get("found", False)})
 
     # Stage 21: Defensive HTTP Response Header Grading
@@ -708,11 +799,24 @@ def main():
         avg_score = int(sum(g["score"] for g in security_grades) / len(security_grades))
         extra_md.append(f"- Defensive header posture: **{avg_score}/100 average grade**")
 
-    build_markdown_report(args.domain, output_dir, subdomains, live_hosts, extra_md)
+    if zone_transfer_findings:
+        vuln_axfr = sum(1 for z in zone_transfer_findings if z.get("vulnerable"))
+        extra_md.append(
+            f"- DNS Zone Transfer (AXFR): **{len(zone_transfer_findings)} nameservers tested** "
+            f"({vuln_axfr} vulnerable)"
+        )
+    if jwt_findings:
+        crit_jwts = sum(1 for j in jwt_findings if j.get("risk_level") == "CRITICAL")
+        extra_md.append(
+            f"- JWT Security Analysis: **{len(jwt_findings)} tokens analyzed** "
+            f"({crit_jwts} critical flaws)"
+        )
+
+    build_markdown_report(domain, output_dir, subdomains, live_hosts, extra_md)
 
     if args.json:
         (output_dir / "report.json").write_text(json.dumps({
-            "domain": args.domain,
+            "domain": domain,
             "subdomains": subdomains,
             "live_hosts": live_hosts,
             "ports": ports_by_host,
@@ -740,11 +844,13 @@ def main():
             "security_txt": security_txt,
             "security_grades": security_grades,
             "permutations": permutation_results,
+            "zone_transfer": zone_transfer_findings,
+            "jwt_analysis": jwt_findings,
         }, indent=2), encoding="utf-8")
 
     if args.html:
         report.build_html_report(
-            args.domain, output_dir, subdomains, live_hosts,
+            domain, output_dir, subdomains, live_hosts,
             ports_by_host=ports_by_host,
             vuln_findings=vuln_findings,
             secret_findings=secret_findings,
@@ -763,39 +869,62 @@ def main():
             security_grades=security_grades,
             security_txt=security_txt,
             permutation_count=len(permutation_results),
+            zone_transfer=zone_transfer_findings,
+            jwt_findings=jwt_findings,
+        )
+
+    if getattr(args, "sarif", False):
+        sarif_findings = {
+            "takeovers": takeover_findings,
+            "vulns": vuln_findings,
+            "secrets": secret_findings,
+            "sensitive_files": sensitive_findings,
+            "zone_transfers": zone_transfer_findings,
+            "jwts": jwt_findings,
+            "cves": cve_findings,
+            "email_security": email_security,
+        }
+        sarif.generate_sarif(domain, output_dir, sarif_findings)
+
+    stats_dict = {
+        "Subdomains": len(subdomains),
+        "Live hosts": len(live_hosts),
+        "Vuln findings": len(vuln_findings),
+        "Potential secrets": len(secret_findings),
+        "Endpoints": len(fuzz_findings),
+    }
+    if cloud_findings:
+        stats_dict["Cloud assets"] = len(cloud_findings)
+    if cname_findings:
+        stats_dict["Service CNAMEs"] = len(cname_findings)
+    if takeover_findings:
+        stats_dict["Confirmed takeovers"] = len(takeover_findings)
+    if leak_findings:
+        stats_dict["GitHub leaks"] = len(leak_findings)
+    if cve_findings:
+        stats_dict["Tech CVEs"] = len(cve_findings)
+    if shodan_findings:
+        stats_dict["Shodan hosts"] = len(shodan_findings)
+    if perm_scale_findings:
+        stats_dict["Permutations confirmed"] = len(perm_scale_findings)
+    if sensitive_findings:
+        stats_dict["Sensitive files"] = len(sensitive_findings)
+    if diff_data and diff_data.get("new_subdomains"):
+        stats_dict["New subdomains"] = len(diff_data["new_subdomains"])
+    if ssl_findings:
+        stats_dict["SSL hosts"] = len(ssl_findings)
+    if zone_transfer_findings:
+        stats_dict["Open AXFR"] = sum(1 for z in zone_transfer_findings if z.get("vulnerable"))
+    if jwt_findings:
+        stats_dict["Critical JWTs"] = sum(
+            1 for j in jwt_findings if j.get("risk_level") == "CRITICAL"
         )
 
     if args.notify:
-        stats_dict = {
-            "Subdomains": len(subdomains),
-            "Live hosts": len(live_hosts),
-            "Vuln findings": len(vuln_findings),
-            "Potential secrets": len(secret_findings),
-            "Endpoints": len(fuzz_findings),
-        }
-        if cloud_findings:
-            stats_dict["Cloud assets"] = len(cloud_findings)
-        if cname_findings:
-            stats_dict["Service CNAMEs"] = len(cname_findings)
-        if takeover_findings:
-            stats_dict["Confirmed takeovers"] = len(takeover_findings)
-        if leak_findings:
-            stats_dict["GitHub leaks"] = len(leak_findings)
-        if cve_findings:
-            stats_dict["Tech CVEs"] = len(cve_findings)
-        if shodan_findings:
-            stats_dict["Shodan hosts"] = len(shodan_findings)
-        if perm_scale_findings:
-            stats_dict["Permutations confirmed"] = len(perm_scale_findings)
-        if sensitive_findings:
-            stats_dict["Sensitive files"] = len(sensitive_findings)
-        if diff_data and diff_data.get("new_subdomains"):
-            stats_dict["New subdomains"] = len(diff_data["new_subdomains"])
-        if ssl_findings:
-            stats_dict["SSL hosts"] = len(ssl_findings)
-        notify.send_webhook(args.notify, args.domain, stats_dict)
+        notify.send_webhook(args.notify, domain, stats_dict)
 
     print(f"[+] Report saved to {output_dir / 'report.md'}")
+    return stats_dict
 
 
 if __name__ == "__main__":

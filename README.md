@@ -82,13 +82,15 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 
 | Option | Description |
 | --- | --- |
-| `-d`, `--domain` | Target domain (required) |
+| `-d`, `--domain` | Target domain (required if not using `-dL`) |
+| `-dL`, `--targets-file FILE` | Batch scan multiple domains listed in a file (one per line) |
 | `-o`, `--output` | Output folder (default: `output`) |
 | `-c`, `--config` | Path to custom YAML/JSON config file (default: `reconflow.yaml`) |
 | `--resume` | Resume an interrupted scan without rerunning completed stages |
 | `--threads` | Number of threads for httpx probing (default: httpx default) |
 | `--timeout` | Timeout in seconds for httpx probing (default: httpx default) |
 | `--json` | Also write results to `report.json` |
+| `--sarif` | Export findings to SARIF v2.1.0 (`results.sarif`) for GitHub Code Scanning |
 | `--screenshots` | Capture screenshots of live hosts (requires gowitness) |
 | `--ports` | Port scan live hosts with naabu |
 | `--top-ports` | Number of top ports to scan (default: 100) |
@@ -98,9 +100,13 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `--templates PATH` | Custom nuclei template file or directory (nuclei's `-t` flag) |
 | `--update-templates` | Update nuclei's default template repository before scanning |
 | `--secrets` | Scan discovered JS files for leaked API keys / tokens / JWTs |
+| `--jwt TOKEN` | Analyze a specific JWT token for AppSec flaws (`alg: none`, weak secrets) |
+| `--jwt-file PATH` | Analyze JWT tokens listed in a text file |
+| `--jwt-audit` | Extract and analyze all JWT tokens discovered across JS secrets |
 | `--fuzz` | Fuzz endpoints and portals on live hosts with ffuf |
 | `--wordlist` | Custom wordlist path for ffuf (default: built-in common list) |
-| `--audit` | Run all defensive asset audits (cloud, ASN, headers, CNAME, sensitive, WAF, email, SSL, favicon, security.txt, grades) |
+| `--audit` | Run all defensive asset audits (cloud, ASN, headers, CNAME, sensitive, WAF, email, SSL, favicon, security.txt, grades, AXFR, JWT) |
+| `--axfr`, `--zone-transfer` | Test authoritative nameservers for open DNS Zone Transfer (AXFR) |
 | `--alterations` | Generate and resolve common subdomain permutation & mutation variants (fast DNS check) |
 | `--perm-scale` | Scaled subdomain permutation with HTTP confirmation & wildcard filtering |
 | `--perm-wordlist PATH` | External wordlist for `--perm-scale` (SecLists-style) |
@@ -127,7 +133,7 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `--sitemap` | Harvest routes from `/robots.txt` and `/sitemap.xml` across live hosts |
 | `--email-security` | Audit domain SPF and DMARC DNS policies for email spoofing |
 | `--diff` | Highlight new subdomains, live hosts, and newly opened ports vs previous run |
-| `--full` | Shortcut for all discovery stages, audits, CT logs, diff, and HTML report |
+| `--full` | Shortcut for all discovery stages, audits, CT logs, diff, SARIF, AXFR, and HTML report |
 | `--html` | Also build a severity-colored HTML report (`report.html`) |
 | `--notify URL` | Post a run summary to a Discord/Slack-compatible webhook on finish |
 
@@ -203,11 +209,15 @@ waf_detection.json   WAF/CDN reverse proxy fingerprinting (when using --audit)
 sitemap_routes.json  extracted routes from robots.txt and sitemaps (when using --audit)
 discovered_routes.txt plain list of all harvested unique paths
 email_security.json  SPF and DMARC spoofing policy audit (when using --audit)
+zone_transfer.json   DNS Zone Transfer AXFR test results (when using --axfr, --audit, or --full)
+jwt_analysis.json    decoded JWT vulnerability & secret analysis (when using --jwt* or --full)
 ssl_audit.json       SSL/TLS certificate expiration & SAN audit (when using --ssl-audit or --audit)
 favicon_fingerprints.json framework detection via favicon MD5 hashes (when using --favicon or --audit)
 security_txt.json    RFC 9116 vulnerability disclosure policies (when using --security-txt or --audit)
 security_grades.json defensive HTTP security header letter grades (when using --security-headers or --audit)
 diff.json            new & removed subdomains, live hosts, and ports (when using --diff)
+results.sarif        OASIS SARIF v2.1.0 code scanning report (when using --sarif or --full)
+batch_summary.json   multi-target batch progress and summary metrics (when using -dL)
 report.md            summary Markdown report
 report.json          structured JSON report (when using --json)
 report.html          severity-colored HTML dashboard with diff alerts
@@ -245,6 +255,17 @@ screenshots/         captured screenshots of live hosts (when using --screenshot
 - [x] Robots.txt and sitemap route harvesting
 - [x] Email security & DNS governance (SPF / DMARC)
 - [x] Subdomain permutation & mutation engine (`--alterations`)
+- [x] Scaled permutation engine with HTTP wildcard confirmation (`--perm-scale`)
+- [x] Passive OSINT lookups via Shodan InternetDB & Censys (`--passive`)
+- [x] Custom Nuclei templates and auto-update support (`--templates`)
+- [x] Subdomain takeover HTTP fingerprinting (`--takeover`)
+- [x] HackerOne / Bugcrowd scope enforcement (`--scope`)
+- [x] Public GitHub secret & credential leak discovery (`--github-leaks`)
+- [x] Tech-stack version CVE correlation against NVD (`--cve-correlate`)
+- [x] Multi-target batch scanning (`-dL` / `--targets-file`)
+- [x] OASIS SARIF v2.1.0 export for GitHub Code Scanning (`--sarif`)
+- [x] Authoritative DNS Zone Transfer (AXFR) misconfiguration check (`--axfr`)
+- [x] JSON Web Token (JWT) AppSec analysis & secret cracking (`--jwt-audit`)
 - [x] SSL/TLS certificate expiration & SAN auditing (`--ssl-audit`)
 - [x] Web framework favicon MD5 fingerprinting (`--favicon`)
 - [x] RFC 9116 `security.txt` policy harvesting (`--security-txt`)
