@@ -26,6 +26,8 @@ from reconflow import (
     github_leaks,
     modules,
     notify,
+    passive_lookup,
+    permute_scale,
     report,
     scope,
     state,
@@ -116,6 +118,11 @@ def main():
                     help="collect historical URLs + params with gau")
     ap.add_argument("--vuln", action="store_true", help="run nuclei against live hosts")
     ap.add_argument("--severity", help="nuclei severity filter (comma-separated)")
+    ap.add_argument("--templates", metavar="PATH",
+                    help="custom nuclei template file or directory "
+                         "(default: nuclei's built-in set)")
+    ap.add_argument("--update-templates", action="store_true",
+                    help="update nuclei's default templates before scanning")
     ap.add_argument("--secrets", action="store_true", help="scan JS files for leaked secrets")
     ap.add_argument("--fuzz", action="store_true", help="fuzz endpoints on live hosts with ffuf")
     ap.add_argument("--wordlist", help="wordlist for ffuf fuzzing")
@@ -140,6 +147,17 @@ def main():
                     help="GitHub PAT for --github-leaks (required, GitHub code search needs auth)")
     ap.add_argument("--cve-correlate", action="store_true",
                     help="cross-reference httpx-detected tech versions against NVD CVEs")
+    ap.add_argument("--passive", action="store_true",
+                    help="passive Shodan InternetDB lookup (free, no API key)")
+    ap.add_argument("--censys-id", metavar="ID", help="Censys API ID for --passive (optional)")
+    ap.add_argument("--censys-secret", metavar="SECRET",
+                    help="Censys API secret for --passive (optional)")
+    ap.add_argument("--perm-scale", action="store_true",
+                    help="scaled subdomain permutation with HTTP confirmation (vs DNS-only check)")
+    ap.add_argument("--perm-wordlist", metavar="PATH",
+                    help="external wordlist for --perm-scale (SecLists-style, one word per line)")
+    ap.add_argument("--perm-max", type=int, default=5000,
+                    help="max permutation candidates to probe (default: 5000)")
     ap.add_argument("--ct-logs", action="store_true",
                     help="harvest subdomains from Certificate Transparency logs (crt.sh)")
     ap.add_argument("--sensitive-files", action="store_true",
@@ -255,7 +273,28 @@ def main():
             scope_data = scope.load_scope(args.scope)
             subdomains, _ = scope.filter_in_scope(subdomains, scope_data, output_dir)
             (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
+        if args.perm_scale:
+            perm_scale_findings = permute_scale.generate_permutations_scaled(
+                subdomains, args.domain, output_dir,
+                wordlist_path=args.perm_wordlist, max_candidates=args.perm_max,
+            )
+            confirmed_hosts = [r["host"] for r in perm_scale_findings if "host" in r]
+            subdomains = sorted(list(set(subdomains) | set(confirmed_hosts)))
+            if args.scope:
+                scope_data = scope.load_scope(args.scope)
+                subdomains, _ = scope.filter_in_scope(subdomains, scope_data, output_dir)
+            (output_dir / "subdomains.txt").write_text("\n".join(subdomains), encoding="utf-8")
+            sm.mark_completed("perm_scale", {"confirmed": len(perm_scale_findings)})
         sm.mark_completed("subdomains", {"count": len(subdomains)})
+
+    perm_scale_findings = []
+    if args.perm_scale and (output_dir / "permutations_scaled.json").exists():
+        try:
+            perm_scale_findings = json.loads(
+                (output_dir / "permutations_scaled.json").read_text(encoding="utf-8")
+            )
+        except Exception:
+            pass
 
     httpx_records = []
     # Stage 2: Live Hosts
@@ -290,6 +329,25 @@ def main():
     email_security, sitemap_routes, diff_data = {}, {}, {}
     ssl_findings, favicon_findings, security_grades = [], [], []
     security_txt = {}
+    shodan_findings = []
+
+    # Stage: Passive OSINT Lookups (Shodan InternetDB, optional Censys)
+    if args.passive and live_hosts:
+        if sm.is_completed("passive") and (output_dir / "shodan_passive.json").exists():
+            print(f"[*] Resuming: loading passive lookup from {output_dir / 'shodan_passive.json'}")
+            try:
+                shodan_findings = json.loads(
+                    (output_dir / "shodan_passive.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                shodan_findings = passive_lookup.shodan_internetdb_lookup(live_hosts, output_dir)
+        else:
+            shodan_findings = passive_lookup.shodan_internetdb_lookup(live_hosts, output_dir)
+            if args.censys_id:
+                passive_lookup.censys_lookup(
+                    live_hosts, output_dir, args.censys_id, args.censys_secret
+                )
+            sm.mark_completed("passive", {"hosts_with_data": len(shodan_findings)})
 
     # Stage 3: Port Scan
     if args.ports and live_hosts:
@@ -324,9 +382,15 @@ def main():
                 lines = (output_dir / "vulns.json").read_text(encoding="utf-8").splitlines()
                 vuln_findings = [json.loads(line) for line in lines if line.strip()]
             except Exception:
-                vuln_findings = modules.vuln_scan(live_hosts, output_dir, args.severity)
+                vuln_findings = modules.vuln_scan(
+                    live_hosts, output_dir, args.severity,
+                    templates=args.templates, update_templates=args.update_templates,
+                )
         else:
-            vuln_findings = modules.vuln_scan(live_hosts, output_dir, args.severity)
+            vuln_findings = modules.vuln_scan(
+                live_hosts, output_dir, args.severity,
+                templates=args.templates, update_templates=args.update_templates,
+            )
             sm.mark_completed("vuln", {"findings_count": len(vuln_findings)})
 
     # Stage 6: Secret Scan
@@ -613,6 +677,11 @@ def main():
         extra_md.append(
             f"- Tech-stack CVEs: **{total_cves}** across {len(cve_findings)} technologies"
         )
+    if shodan_findings:
+        shodan_vulns = sum(len(r.get("vulns", [])) for r in shodan_findings)
+        extra_md.append(f"- Shodan passive hosts: **{len(shodan_findings)}** ({shodan_vulns} CVEs)")
+    if perm_scale_findings:
+        extra_md.append(f"- Scaled HTTP permutations: **{len(perm_scale_findings)}**")
     if sensitive_findings:
         extra_md.append(f"- Exposed sensitive files: **{len(sensitive_findings)}**")
     if waf_findings:
@@ -659,6 +728,8 @@ def main():
             "takeover_confirmed": takeover_findings,
             "github_leaks": leak_findings,
             "cve_correlation": cve_findings,
+            "shodan_passive": shodan_findings,
+            "permutations_scaled": perm_scale_findings,
             "sensitive_files": sensitive_findings,
             "waf_detection": waf_findings,
             "sitemap_routes": sitemap_routes,
@@ -712,6 +783,10 @@ def main():
             stats_dict["GitHub leaks"] = len(leak_findings)
         if cve_findings:
             stats_dict["Tech CVEs"] = len(cve_findings)
+        if shodan_findings:
+            stats_dict["Shodan hosts"] = len(shodan_findings)
+        if perm_scale_findings:
+            stats_dict["Permutations confirmed"] = len(perm_scale_findings)
         if sensitive_findings:
             stats_dict["Sensitive files"] = len(sensitive_findings)
         if diff_data and diff_data.get("new_subdomains"):

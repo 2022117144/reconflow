@@ -90,11 +90,21 @@ def url_collect(domain: str, output_dir: Path):
 # -------------------------------------------------------------- nuclei ----
 
 def vuln_scan(live_hosts, output_dir: Path, severity: str = "medium,high,critical",
-              rate_limit: int = 150):
+              rate_limit: int = 150, templates: str = None, update_templates: bool = False):
     """Run nuclei against live hosts, scoped to a minimum severity by default
-    so a first run doesn't drown you in 'info' noise."""
+    so a first run doesn't drown you in 'info' noise.
+
+    templates: path to a custom template file or directory (nuclei's -t flag).
+    If not given, nuclei uses its own default template set. Can point at
+    a single .yaml file, a folder of them, or a public template repo
+    you've cloned locally.
+    """
     if _tool_missing("nuclei"):
         return []
+
+    if update_templates:
+        print("[*] Updating nuclei's default template set...")
+        subprocess.run(["nuclei", "-update-templates", "-silent"], capture_output=True, text=True)
 
     hosts_file = output_dir / "hosts_for_vulnscan.txt"
     hosts_file.write_text("\n".join(live_hosts), encoding="utf-8")
@@ -106,7 +116,15 @@ def vuln_scan(live_hosts, output_dir: Path, severity: str = "medium,high,critica
         "-rate-limit", str(rate_limit),
         "-jsonl", "-o", str(out_file), "-silent",
     ]
-    print(f"[*] Running nuclei (severity: {severity}) against {len(live_hosts)} hosts...")
+    if templates:
+        if not Path(templates).exists():
+            print(f"[!] --templates path '{templates}' not found — falling back to nuclei's "
+                  f"default template set.")
+        else:
+            cmd += ["-t", templates]
+    print(f"[*] Running nuclei (severity: {severity}"
+          f"{', templates: ' + templates if templates else ''}) "
+          f"against {len(live_hosts)} hosts...")
     subprocess.run(cmd, capture_output=True, text=True)
 
     findings = []

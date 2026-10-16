@@ -95,11 +95,19 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `--urls` | Collect historical URLs + unique query parameters via gau |
 | `--vuln` | Run nuclei against live hosts |
 | `--severity` | nuclei severity filter, comma-separated (default: `medium,high,critical`) |
+| `--templates PATH` | Custom nuclei template file or directory (nuclei's `-t` flag) |
+| `--update-templates` | Update nuclei's default template repository before scanning |
 | `--secrets` | Scan discovered JS files for leaked API keys / tokens / JWTs |
 | `--fuzz` | Fuzz endpoints and portals on live hosts with ffuf |
 | `--wordlist` | Custom wordlist path for ffuf (default: built-in common list) |
 | `--audit` | Run all defensive asset audits (cloud, ASN, headers, CNAME, sensitive, WAF, email, SSL, favicon, security.txt, grades) |
-| `--alterations` | Generate and resolve common subdomain permutation & mutation variants |
+| `--alterations` | Generate and resolve common subdomain permutation & mutation variants (fast DNS check) |
+| `--perm-scale` | Scaled subdomain permutation with HTTP confirmation & wildcard filtering |
+| `--perm-wordlist PATH` | External wordlist for `--perm-scale` (SecLists-style) |
+| `--perm-max COUNT` | Max permutation candidates to probe (default: `5000`) |
+| `--passive` | Passive OSINT via Shodan InternetDB (free, keyless, zero packets to target) |
+| `--censys-id ID` | Optional Censys API ID for passive host search |
+| `--censys-secret SECRET` | Optional Censys API secret for passive host search |
 | `--ssl-audit` | Audit SSL/TLS certificate validity, expiry days, and SAN coverage |
 | `--favicon` | Fingerprint web application frameworks via favicon MD5 hashes |
 | `--security-txt` | Discover and parse RFC 9116 `security.txt` policies across live hosts |

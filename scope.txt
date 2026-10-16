@@ -1,0 +1,9 @@
+# HackerOne Scope for crypto.com
+# In-scope wildcard domains
+*.crypto.com
+*.mona.co
+
+# Explicit out-of-scope exclusions
+!swap-contracts
+!cro-staking
+!chain-desktop-wallet
