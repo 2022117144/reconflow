@@ -78,7 +78,9 @@ def filter_wildcard(subs, wildcard_ips):
 def find_subdomains(domain, out_file):
     print(f"[*] Finding subdomains for {domain}...")
     result = run(["subfinder", "-d", domain, "-silent"])
-    subs = sorted(set(result.stdout.split()))
+    subs = set(result.stdout.split())
+    subs.add(domain.strip().lower())
+    subs = sorted(subs)
     out_file.write_text("\n".join(subs) + "\n", encoding="utf-8")
     print(f"[+] Found {len(subs)} subdomains")
     return subs

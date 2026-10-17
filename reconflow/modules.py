@@ -28,7 +28,8 @@ def _tool_missing(name: str) -> bool:
 
 # ---------------------------------------------------------------- ports ----
 
-def port_scan(live_hosts, output_dir: Path, top_ports: int = 100, rate: int = 1000):
+def port_scan(live_hosts, output_dir: Path, top_ports: int = 100, rate: int = 1000,
+              scan_type: str = "connect"):
     """Run naabu against a list of hosts (hostnames or IPs, no scheme)."""
     if _tool_missing("naabu"):
         return {}
@@ -42,10 +43,12 @@ def port_scan(live_hosts, output_dir: Path, top_ports: int = 100, rate: int = 10
         "naabu", "-list", str(hosts_file),
         "-top-ports", str(top_ports),
         "-rate", str(rate),
+        "-scan-type", scan_type,
+        "-no-stdin",
         "-json", "-o", str(out_file), "-silent",
     ]
-    print(f"[*] Port scanning {len(clean_hosts)} hosts (top {top_ports} ports)...")
-    subprocess.run(cmd, capture_output=True, text=True)
+    print(f"[*] Port scanning {len(clean_hosts)} hosts (top {top_ports} ports, mode: {scan_type})...")
+    subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
 
     results = {}
     if out_file.exists():
@@ -75,7 +78,7 @@ def url_collect(domain: str, output_dir: Path):
         return [], []
 
     print(f"[*] Collecting historical URLs for {domain}...")
-    proc = subprocess.run(["gau", "--subs", domain], capture_output=True, text=True)
+    proc = subprocess.run(["gau", "--subs", domain], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     urls = sorted({u.strip() for u in proc.stdout.splitlines() if u.strip()})
 
     (output_dir / "urls.txt").write_text("\n".join(urls), encoding="utf-8")
@@ -104,7 +107,7 @@ def vuln_scan(live_hosts, output_dir: Path, severity: str = "medium,high,critica
 
     if update_templates:
         print("[*] Updating nuclei's default template set...")
-        subprocess.run(["nuclei", "-update-templates", "-silent"], capture_output=True, text=True)
+        subprocess.run(["nuclei", "-update-templates", "-silent"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
 
     hosts_file = output_dir / "hosts_for_vulnscan.txt"
     hosts_file.write_text("\n".join(live_hosts), encoding="utf-8")
@@ -114,6 +117,7 @@ def vuln_scan(live_hosts, output_dir: Path, severity: str = "medium,high,critica
         "nuclei", "-list", str(hosts_file),
         "-severity", severity,
         "-rate-limit", str(rate_limit),
+        "-no-stdin",
         "-jsonl", "-o", str(out_file), "-silent",
     ]
     if templates:
@@ -125,7 +129,7 @@ def vuln_scan(live_hosts, output_dir: Path, severity: str = "medium,high,critica
     print(f"[*] Running nuclei (severity: {severity}"
           f"{', templates: ' + templates if templates else ''}) "
           f"against {len(live_hosts)} hosts...")
-    subprocess.run(cmd, capture_output=True, text=True)
+    subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
 
     findings = []
     if out_file.exists():
@@ -217,7 +221,7 @@ def dir_fuzz(live_hosts, output_dir: Path, wordlist: str = None, threads: int = 
             "-t", str(threads),
             "-of", "json", "-o", str(tmp_out), "-s",
         ]
-        subprocess.run(cmd, capture_output=True, text=True)
+        subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if tmp_out.exists():
             try:
                 data = json.loads(tmp_out.read_text(encoding="utf-8"))

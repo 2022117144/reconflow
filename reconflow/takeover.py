@@ -11,9 +11,17 @@ A confirmed one means the fingerprint matched — high-confidence, report-ready.
 """
 
 import json
+import ssl
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+# Unverified SSL context so takeover checks against HTTPS endpoints don't
+# drop silently when dangling CNAMEs lack a valid certificate for the custom domain.
+try:
+    _SSL_CTX = ssl._create_unverified_context()
+except AttributeError:
+    _SSL_CTX = ssl.create_default_context()
 
 # (provider substring in CNAME) -> (fingerprint text expected in response body)
 # Conservative, well-established fingerprints only — false positives here
@@ -37,7 +45,7 @@ TAKEOVER_FINGERPRINTS = {
 def _fetch(url: str, timeout: int) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "reconflow-takeover-check"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX) as resp:
             return resp.read(500_000).decode("utf-8", errors="ignore")
     except urllib.error.HTTPError as e:
         # Many of these fingerprints only show up on error pages (404/503) —
@@ -66,11 +74,14 @@ def detect_subdomain_takeovers(cname_findings, output_dir: Path, timeout: int = 
     confirmed = []
 
     for entry in cname_findings:
-        provider = entry.get("provider", "")
+        provider = (entry.get("provider") or "").lower()
+        cname = (entry.get("cname") or "").lower()
         subdomain = entry.get("subdomain")
+        target_str = f"{provider} {cname}"
+
         fingerprint = None
         for key, fp in TAKEOVER_FINGERPRINTS.items():
-            if key.strip(".") in provider or provider in key:
+            if key.strip(".") in target_str:
                 fingerprint = fp
                 break
         if not fingerprint or not subdomain:

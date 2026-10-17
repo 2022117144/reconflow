@@ -49,6 +49,55 @@ class TestScope(unittest.TestCase):
         self.assertIn("internal.example.com", dropped)
         self.assertIn("other.com", dropped)
 
+    def test_filter_prevents_domain_collision_and_substring_leak(self):
+        """CRITICAL: Ensure substrings like evil-example.com or example.com.attacker.com are NEVER treated as in-scope."""
+        scope = {"in_scope": ["example.com"], "out_of_scope": []}
+        candidates = [
+            "example.com",                  # apex -> kept
+            "api.example.com",              # sub -> kept
+            "deep.sub.dev.example.com",     # deep sub -> kept
+            "notexample.com",               # prefix collision -> MUST DROP
+            "evil-example.com",             # hyphen collision -> MUST DROP
+            "example.com.attacker.com",     # suffix extension -> MUST DROP
+            "example.community",            # TLD collision -> MUST DROP
+            "fakeexample.com",              # substring match -> MUST DROP
+        ]
+        kept, dropped = filter_in_scope(candidates, scope)
+        self.assertEqual(sorted(kept), ["api.example.com", "deep.sub.dev.example.com", "example.com"])
+        self.assertIn("notexample.com", dropped)
+        self.assertIn("evil-example.com", dropped)
+        self.assertIn("example.com.attacker.com", dropped)
+        self.assertIn("example.community", dropped)
+        self.assertIn("fakeexample.com", dropped)
+
+    def test_filter_cidr_and_ip_matching(self):
+        scope = {"in_scope": ["192.168.1.0/24", "10.0.0.1"], "out_of_scope": ["192.168.1.99"]}
+        candidates = [
+            "192.168.1.50",
+            "192.168.1.99",
+            "192.168.2.1",
+            "10.0.0.1",
+            "10.0.0.2",
+        ]
+        kept, dropped = filter_in_scope(candidates, scope)
+        self.assertIn("192.168.1.50", kept)
+        self.assertIn("10.0.0.1", kept)
+        self.assertIn("192.168.1.99", dropped)  # out of scope wins
+        self.assertIn("192.168.2.1", dropped)   # not in CIDR
+        self.assertIn("10.0.0.2", dropped)
+
+    def test_filter_handles_schemes_ports_paths(self):
+        scope = {"in_scope": ["example.com"], "out_of_scope": ["admin.example.com"]}
+        candidates = [
+            "https://api.example.com:8443/graphql",
+            "http://admin.example.com:80/console",
+            "http://example.com/",
+        ]
+        kept, dropped = filter_in_scope(candidates, scope)
+        self.assertIn("https://api.example.com:8443/graphql", kept)
+        self.assertIn("http://example.com/", kept)
+        self.assertIn("http://admin.example.com:80/console", dropped)
+
 
 class TestTakeover(unittest.TestCase):
     def test_fingerprints_cover_major_providers(self):
@@ -82,6 +131,21 @@ class TestTakeover(unittest.TestCase):
             with patch("reconflow.takeover._fetch", return_value="<html>Welcome</html>"):
                 confirmed = detect_subdomain_takeovers(cname_findings, out_dir)
             self.assertEqual(confirmed, [])
+
+    def test_detect_matches_cname_target_when_provider_empty(self):
+        """Even if provider is empty or unspecified, detect_subdomain_takeovers should match on cname."""
+        cname_findings = [{
+            "subdomain": "blog.example.com",
+            "cname": "my-user.github.io",
+            "provider": "",
+            "active_dns": False,
+        }]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = Path(tmpdir)
+            with patch("reconflow.takeover._fetch", return_value="404: There isn't a GitHub Pages site here"):
+                confirmed = detect_subdomain_takeovers(cname_findings, out_dir)
+            self.assertEqual(len(confirmed), 1)
+            self.assertEqual(confirmed[0]["subdomain"], "blog.example.com")
 
 
 class TestGithubLeaks(unittest.TestCase):

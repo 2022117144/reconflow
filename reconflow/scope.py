@@ -17,16 +17,30 @@ Supports two input formats:
 """
 
 import fnmatch
+import ipaddress
 import json
 from pathlib import Path
 
 
 def _normalize(asset: str) -> str:
-    return asset.strip().lower().lstrip("*.")
+    """Normalize a scope pattern or target string."""
+    asset = asset.strip().lower()
+    if "://" in asset:
+        asset = asset.split("://", 1)[-1]
+    asset = asset.split("/", 1)[0]
+    if ":" in asset and not asset.startswith("["):
+        parts = asset.split(":")
+        if len(parts) == 2 and parts[1].isdigit():
+            asset = parts[0]
+    if asset.startswith("*."):
+        asset = asset[2:]
+    elif asset.startswith("."):
+        asset = asset[1:]
+    return asset
 
 
 def load_scope(path: str):
-    """Returns {'in_scope': [...], 'out_of_scope': [...]} of glob-style patterns."""
+    """Returns {'in_scope': [...], 'out_of_scope': [...]} of patterns."""
     text = Path(path).read_text(encoding="utf-8")
     in_scope, out_of_scope = [], []
 
@@ -43,13 +57,27 @@ def load_scope(path: str):
                     continue
                 asset_type = (item.get("asset_type") or "").upper()
                 if asset_type and "URL" not in asset_type and "DOMAIN" not in asset_type \
-                        and "WILDCARD" not in asset_type and "OTHER" not in asset_type:
+                        and "WILDCARD" not in asset_type and "OTHER" not in asset_type \
+                        and "IP" not in asset_type and "CIDR" not in asset_type:
                     continue  # skip mobile apps, source code repos, etc.
+
+                instruction = (item.get("instruction") or "").lower()
+                is_out_of_scope = (
+                    "out of scope" in instruction
+                    or item.get("eligible_for_submission") is False
+                    or item.get("eligible_for_bounty") is False
+                )
+
                 eligible = item.get(
                     "eligible_for_submission",
-                    item.get("eligible_for_bounty", True),
+                    item.get("eligible_for_bounty", not is_out_of_scope),
                 )
-                (in_scope if eligible else out_of_scope).append(_normalize(asset))
+                if is_out_of_scope:
+                    eligible = False
+
+                norm = _normalize(asset)
+                if norm:
+                    (in_scope if eligible else out_of_scope).append(norm)
             return {"in_scope": in_scope, "out_of_scope": out_of_scope}
         except json.JSONDecodeError:
             pass  # fall through to plain-text parsing
@@ -59,17 +87,50 @@ def load_scope(path: str):
         if not line or line.startswith("#"):
             continue
         if line.startswith("!"):
-            out_of_scope.append(_normalize(line[1:]))
+            norm = _normalize(line[1:])
+            if norm:
+                out_of_scope.append(norm)
         else:
-            in_scope.append(_normalize(line))
+            norm = _normalize(line)
+            if norm:
+                in_scope.append(norm)
 
     return {"in_scope": in_scope, "out_of_scope": out_of_scope}
 
 
-def _matches_any(host: str, patterns) -> bool:
+def _matches_pattern(host: str, pattern: str) -> bool:
     host = host.lower()
+    pattern = pattern.lower()
+
+    # 1. IP / CIDR matching
+    try:
+        host_ip = ipaddress.ip_address(host)
+        pattern_net = ipaddress.ip_network(pattern, strict=False)
+        return host_ip in pattern_net
+    except ValueError:
+        pass
+
+    # 2. Exact hostname match
+    if host == pattern:
+        return True
+
+    # 3. Subdomain match (e.g. api.example.com matches example.com)
+    if host.endswith(f".{pattern}"):
+        return True
+
+    # 4. Glob / wildcard matching if pattern contains wildcards (e.g. dev-*.example.com)
+    if "*" in pattern or "?" in pattern:
+        if fnmatch.fnmatch(host, pattern):
+            return True
+        if pattern.startswith("*.") and host == pattern[2:]:
+            return True
+
+    return False
+
+
+def _matches_any(host: str, patterns) -> bool:
     for pattern in patterns:
-        if host == pattern or host.endswith(f".{pattern}") or fnmatch.fnmatch(host, f"*{pattern}*"):
+        if _matches_pattern(host, pattern):
             return True
     return False
 
@@ -82,6 +143,12 @@ def filter_in_scope(subdomains, scope: dict, output_dir: Path = None):
     kept, dropped = [], []
     for host in subdomains:
         clean = host.split("://", 1)[-1].split("/", 1)[0]
+        if ":" in clean and not clean.startswith("["):
+            parts = clean.split(":")
+            if len(parts) == 2 and parts[1].isdigit():
+                clean = parts[0]
+        clean = clean.lower().strip()
+
         if _matches_any(clean, out_of_scope_patterns):
             dropped.append(host)
         elif not in_scope_patterns or _matches_any(clean, in_scope_patterns):

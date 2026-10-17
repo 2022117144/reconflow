@@ -50,7 +50,9 @@ def run_subfinder(domain: str, output_dir: Path):
     print(f"[*] Finding subdomains for {domain}...")
     proc = subprocess.run(["subfinder", "-d", domain, "-silent"],
                           capture_output=True, text=True)
-    subs = sorted({s.strip() for s in proc.stdout.splitlines() if s.strip()})
+    subs = {s.strip() for s in proc.stdout.splitlines() if s.strip()}
+    subs.add(domain.strip().lower())  # always probe the apex domain itself
+    subs = sorted(subs)
     (output_dir / "subdomains.txt").write_text("\n".join(subs), encoding="utf-8")
     print(f"[+] Found {len(subs)} subdomains")
     return subs
@@ -124,6 +126,9 @@ def main():
     # new stages — all opt-in
     ap.add_argument("--ports", action="store_true", help="port scan live hosts with naabu")
     ap.add_argument("--top-ports", type=int)
+    ap.add_argument("--port-scan-type", choices=["connect", "syn"], default="connect",
+                    help="naabu scan mode (default: connect — works without Npcap/root; "
+                         "syn is faster but needs Npcap on Windows / raw sockets on Linux)")
     ap.add_argument("--urls", action="store_true",
                     help="collect historical URLs + params with gau")
     ap.add_argument("--vuln", action="store_true", help="run nuclei against live hosts")
@@ -412,9 +417,15 @@ def run_pipeline(domain: str, args) -> dict:
             try:
                 ports_by_host = json.loads((output_dir / "ports.json").read_text(encoding="utf-8"))
             except Exception:
-                ports_by_host = modules.port_scan(live_hosts, output_dir, args.top_ports)
+                ports_by_host = modules.port_scan(
+                    live_hosts, output_dir, args.top_ports,
+                    scan_type=getattr(args, "port_scan_type", "connect"),
+                )
         else:
-            ports_by_host = modules.port_scan(live_hosts, output_dir, args.top_ports)
+            ports_by_host = modules.port_scan(
+                live_hosts, output_dir, args.top_ports,
+                scan_type=getattr(args, "port_scan_type", "connect"),
+            )
             sm.mark_completed("ports", {"hosts_with_ports": len(ports_by_host)})
 
     # Stage 4: Historical URLs & Params
