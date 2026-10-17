@@ -25,7 +25,16 @@ from reconflow.audits import CLOUD_PATTERNS, SECURITY_HEADERS, detect_cloud_asse
 from reconflow.config import _cast_value, _simple_yaml_parse, load_config
 from reconflow.modules import PARAM_RE, SECRET_PATTERNS, _extract_js_urls
 from reconflow.notify import send_webhook
-from reconflow.platform_check import ARCH_PACKAGES, get_install_hint, is_arch_linux
+from reconflow.platform_check import (
+    ARCH_PACKAGES,
+    DEBIAN_PACKAGES,
+    FEDORA_PACKAGES,
+    detect_distro,
+    get_install_hint,
+    is_arch_linux,
+    is_debian_linux,
+    is_fedora_linux,
+)
 from reconflow.report import _stat, _vuln_table, build_html_report
 from reconflow.state import StateManager
 
@@ -190,26 +199,45 @@ class TestAudits(unittest.TestCase):
 
 
 class TestPlatformCheck(unittest.TestCase):
-    def test_arch_packages_presence(self):
-        self.assertIn("subfinder", ARCH_PACKAGES)
-        self.assertIn("httpx", ARCH_PACKAGES)
-        self.assertIn("nuclei", ARCH_PACKAGES)
-        self.assertIn("ffuf", ARCH_PACKAGES)
+    def test_packages_presence(self):
+        for pkg_map in (ARCH_PACKAGES, DEBIAN_PACKAGES, FEDORA_PACKAGES):
+            self.assertIn("subfinder", pkg_map)
+            self.assertIn("httpx", pkg_map)
+            self.assertIn("nuclei", pkg_map)
+            self.assertIn("ffuf", pkg_map)
 
     def test_get_install_hint(self):
-        # On non-Arch platforms, should return friendly default hint
-        with patch("reconflow.platform_check.is_arch_linux", return_value=False):
+        # On unknown platforms, should return friendly default hint
+        with patch("reconflow.platform_check.is_arch_linux", return_value=False), \
+             patch("reconflow.platform_check.is_debian_linux", return_value=False), \
+             patch("reconflow.platform_check.is_fedora_linux", return_value=False):
             hint = get_install_hint("subfinder")
             self.assertEqual(hint, "Install it to enable this feature.")
 
-        # On Arch Linux, should return pacman or go install command
+        # On Arch Linux, should return pacman command
         with patch("reconflow.platform_check.is_arch_linux", return_value=True):
             hint = get_install_hint("subfinder")
             self.assertEqual(hint, "Install with: sudo pacman -S subfinder")
 
+        # On Debian / Kali Linux, should return apt command
+        with patch("reconflow.platform_check.is_arch_linux", return_value=False), \
+             patch("reconflow.platform_check.is_debian_linux", return_value=True):
+            hint = get_install_hint("subfinder")
+            self.assertEqual(hint, "Install with: sudo apt install subfinder")
+
+        # On Fedora Linux, should return dnf/go command
+        with patch("reconflow.platform_check.is_arch_linux", return_value=False), \
+             patch("reconflow.platform_check.is_debian_linux", return_value=False), \
+             patch("reconflow.platform_check.is_fedora_linux", return_value=True):
+            hint = get_install_hint("subfinder")
+            self.assertIn("go install", hint)
+
     def test_is_arch_linux_non_linux(self):
         with patch("platform.system", return_value="Windows"):
             self.assertFalse(is_arch_linux())
+            self.assertFalse(is_debian_linux())
+            self.assertFalse(is_fedora_linux())
+            self.assertEqual(detect_distro(), "unknown")
 
 
 class TestReport(unittest.TestCase):

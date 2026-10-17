@@ -76,16 +76,36 @@ git clone https://github.com/ErenYeager1836/reconflow.git
 cd reconflow
 ```
 
-### Arch Linux / BlackArch Setup
+### Automated Linux Toolchain Setup
 
-If you are running Arch Linux or BlackArch, use the automated setup script to install the complete toolchain in one command:
+reconflow includes one-command setup scripts that install and configure all required recon tools, Go binaries, and Nuclei templates for your distribution:
 
+#### Universal Installer (Auto-Detects OS)
+```bash
+chmod +x scripts/setup.sh
+./scripts/setup.sh
+```
+
+#### Kali Linux / Parrot OS / Debian / Ubuntu Setup
+```bash
+chmod +x scripts/setup-debian.sh
+./scripts/setup-debian.sh
+```
+reconflow automatically detects Kali, Parrot, Debian, and Ubuntu at runtime and provides native `apt` commands whenever an optional tool is missing.
+
+#### Arch Linux / BlackArch Setup
 ```bash
 chmod +x scripts/setup-archlinux.sh
 ./scripts/setup-archlinux.sh
 ```
+reconflow detects Arch and BlackArch at runtime and provides native `pacman` installation commands whenever an optional tool is missing.
 
-reconflow also detects Arch/BlackArch at runtime and provides native `pacman` installation commands whenever an optional tool is missing.
+#### Fedora / RHEL / CentOS / Rocky Linux Setup
+```bash
+chmod +x scripts/setup-fedora.sh
+./scripts/setup-fedora.sh
+```
+reconflow detects Fedora and Red Hat derivatives at runtime and provides native installation commands whenever an optional tool is missing.
 
 ## Usage
 
