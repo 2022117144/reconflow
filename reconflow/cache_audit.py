@@ -60,7 +60,10 @@ def audit_host_cache(url: str, timeout: int = 5) -> Dict[str, Any]:
             # Detect CDN vendor from headers
             if "cf-cache-status" in headers:
                 cdn_detected = "Cloudflare"
-            elif "fastly-debug-digest" in headers or "fastly" in headers.get("x-served-by", "").lower():
+            elif (
+                "fastly-debug-digest" in headers
+                or "fastly" in headers.get("x-served-by", "").lower()
+            ):
                 cdn_detected = "Fastly"
             elif "akamai-cache-status" in headers:
                 cdn_detected = "Akamai"
@@ -73,11 +76,20 @@ def audit_host_cache(url: str, timeout: int = 5) -> Dict[str, Any]:
             set_cookie = headers.get("set-cookie", "")
 
             # 1. Critical flaw: Set-Cookie cached publicly
-            if set_cookie and ("public" in cc or ("max-age" in cc and "no-store" not in cc and "private" not in cc)):
+            has_public_cookie = (
+                set_cookie and (
+                    "public" in cc
+                    or ("max-age" in cc and "no-store" not in cc and "private" not in cc)
+                )
+            )
+            if has_public_cookie:
                 findings.append({
                     "type": "SENSITIVE_DATA_PUBLIC_CACHE",
                     "severity": "CRITICAL",
-                    "description": "Endpoint sets cookies while Cache-Control allows public CDN caching (Web Cache Deception risk)."
+                    "description": (
+                        "Endpoint sets cookies while Cache-Control allows public CDN caching "
+                        "(Web Cache Deception risk)."
+                    ),
                 })
 
             # 2. Dynamic route without no-store
@@ -86,7 +98,9 @@ def audit_host_cache(url: str, timeout: int = 5) -> Dict[str, Any]:
                     findings.append({
                         "type": "MISSING_CACHE_CONTROL_ON_DYNAMIC",
                         "severity": "LOW",
-                        "description": "Sensitive/dynamic endpoint lacks explicit no-store/no-cache directive."
+                        "description": (
+                            "Sensitive/dynamic endpoint lacks explicit no-store/no-cache directive."
+                        ),
                     })
 
             # 3. Unkeyed header reflection check
@@ -95,7 +109,10 @@ def audit_host_cache(url: str, timeout: int = 5) -> Dict[str, Any]:
                 findings.append({
                     "type": "UNKEYED_HEADER_REFLECTION",
                     "severity": "HIGH",
-                    "description": "X-Forwarded-Host reflected in Location header, potential Cache Poisoning vector."
+                    "description": (
+                        "X-Forwarded-Host reflected in Location header, "
+                        "potential Cache Poisoning vector."
+                    ),
                 })
 
             return {
@@ -145,11 +162,20 @@ def audit_cache_policies(
     out_file.write_text(json.dumps(results, indent=2), encoding="utf-8")
 
     flagged = sum(1 for r in results if r.get("is_vulnerable"))
-    crit = sum(1 for r in results if any(f.get("severity") == "CRITICAL" for f in r.get("findings", [])))
+    crit = sum(
+        1 for r in results
+        if any(f.get("severity") == "CRITICAL" for f in r.get("findings", []))
+    )
 
     if crit > 0:
-        print(f"[!] CRITICAL: Found {crit} host(s) caching sensitive cookies publicly! Check {out_file.name}")
+        print(
+            f"[!] CRITICAL: Found {crit} host(s) caching sensitive cookies publicly! "
+            f"Check {out_file.name}"
+        )
     else:
-        print(f"[+] Web cache audit complete: {len(results)} hosts audited ({flagged} flagged) -> {out_file.name}")
+        print(
+            f"[+] Web cache audit complete: {len(results)} hosts audited "
+            f"({flagged} flagged) -> {out_file.name}"
+        )
 
     return results

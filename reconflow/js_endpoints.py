@@ -15,15 +15,24 @@ from typing import Dict, List, Set, Any
 
 # Common API route patterns in modern SPAs (React, Vue, Angular, Next.js)
 ROUTE_PATTERNS = [
-    re.compile(r"""(?:["'`])(\/(?:api|v[0-9]+|graphql|auth|oauth|admin|internal|user|account|debug|rest|v1|v2|v3)[\w\-./?&=#%]*)(?:["'`])""", re.IGNORECASE),
-    re.compile(r"""(?:["'`])(\/swagger[\w\-./?&=#%]*|\/openapi[\w\-./?&=#%]*)(?:["'`])""", re.IGNORECASE),
+    re.compile(
+        r"""(?:["'`])(\/(?:api|v[0-9]+|graphql|auth|oauth|admin|internal|user|account|"""
+        r"""debug|rest|v1|v2|v3)[\w\-./?&=#%]*)(?:["'`])""",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"""(?:["'`])(\/swagger[\w\-./?&=#%]*|\/openapi[\w\-./?&=#%]*)(?:["'`])""",
+        re.IGNORECASE,
+    ),
 ]
 
 # Absolute URLs pointing to internal or same-root infrastructure
 URL_PATTERN = re.compile(r"""https?://[a-zA-Z0-9.\-]+(?:\:[0-9]+)?/[a-zA-Z0-9_\-./?&=#%]*""")
 
 # GraphQL queries & mutations defined in client code
-GRAPHQL_QUERY_PATTERN = re.compile(r"""(?:query|mutation|subscription)\s+([A-Za-z0-9_]+)\s*[\(\{]""")
+GRAPHQL_QUERY_PATTERN = re.compile(
+    r"""(?:query|mutation|subscription)\s+([A-Za-z0-9_]+)\s*[\(\{]"""
+)
 
 # URL parameters embedded in strings or fetch calls
 PARAM_PATTERN = re.compile(r"""(?:\?|&)([a-zA-Z0-9_\-]{2,35})=""")
@@ -125,8 +134,6 @@ def fetch_js_file(url: str, timeout: int = 7) -> str:
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            content_type = resp.headers.get("Content-Type", "")
-            # Only read if textual or javascript-like
             raw = resp.read(5 * 1024 * 1024)  # 5 MB max per file
             return raw.decode("utf-8", errors="ignore")
     except Exception:
@@ -226,7 +233,8 @@ def extract_js_endpoints(
 
     txt_path = output_dir / "js_endpoints.txt"
     all_endpoints = sorted(list(combined_routes | combined_absolute))
-    txt_path.write_text("\n".join(all_endpoints) + ("\n" if all_endpoints else ""), encoding="utf-8")
+    content = "\n".join(all_endpoints) + ("\n" if all_endpoints else "")
+    txt_path.write_text(content, encoding="utf-8")
 
     print(
         f"[+] Extracted {len(combined_routes)} unique route(s) and {len(combined_graphql)} "

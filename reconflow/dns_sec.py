@@ -11,7 +11,7 @@ import socket
 import urllib.request
 import urllib.parse
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
 DOH_PROVIDERS = [
     "https://cloudflare-dns.com/dns-query",
@@ -197,7 +197,9 @@ def audit_dns_security(domain: str, output_dir: Path) -> Dict[str, Any]:
     out_file = output_dir / "dns_audit.json"
     out_file.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
-    status_str = f"DNSSEC: {dnssec['status']} | CAA: {caa['status']} | NS: {ns['nameservers_count']}"
+    status_str = (
+        f"DNSSEC: {dnssec['status']} | CAA: {caa['status']} | NS: {ns['nameservers_count']}"
+    )
     if ns["has_dangling_ns"]:
         status_str += f" | CRITICAL: {len(ns['dangling_nameservers'])} dangling NS!"
         print(f"[!] CRITICAL: Found dangling nameservers on {domain}! Check {out_file.name}")

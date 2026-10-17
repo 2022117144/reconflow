@@ -50,7 +50,7 @@ class TestScope(unittest.TestCase):
         self.assertIn("other.com", dropped)
 
     def test_filter_prevents_domain_collision_and_substring_leak(self):
-        """CRITICAL: Ensure substrings like evil-example.com or example.com.attacker.com are NEVER treated as in-scope."""
+        """CRITICAL: Ensure substrings like evil-example.com are NEVER treated as in-scope."""
         scope = {"in_scope": ["example.com"], "out_of_scope": []}
         candidates = [
             "example.com",                  # apex -> kept
@@ -63,7 +63,8 @@ class TestScope(unittest.TestCase):
             "fakeexample.com",              # substring match -> MUST DROP
         ]
         kept, dropped = filter_in_scope(candidates, scope)
-        self.assertEqual(sorted(kept), ["api.example.com", "deep.sub.dev.example.com", "example.com"])
+        expected = ["api.example.com", "deep.sub.dev.example.com", "example.com"]
+        self.assertEqual(sorted(kept), expected)
         self.assertIn("notexample.com", dropped)
         self.assertIn("evil-example.com", dropped)
         self.assertIn("example.com.attacker.com", dropped)
@@ -133,7 +134,7 @@ class TestTakeover(unittest.TestCase):
             self.assertEqual(confirmed, [])
 
     def test_detect_matches_cname_target_when_provider_empty(self):
-        """Even if provider is empty or unspecified, detect_subdomain_takeovers should match on cname."""
+        """Match on cname even if provider is empty or unspecified."""
         cname_findings = [{
             "subdomain": "blog.example.com",
             "cname": "my-user.github.io",
@@ -142,7 +143,8 @@ class TestTakeover(unittest.TestCase):
         }]
         with tempfile.TemporaryDirectory() as tmpdir:
             out_dir = Path(tmpdir)
-            with patch("reconflow.takeover._fetch", return_value="404: There isn't a GitHub Pages site here"):
+            with patch("reconflow.takeover._fetch",
+                       return_value="404: There isn't a GitHub Pages site here"):
                 confirmed = detect_subdomain_takeovers(cname_findings, out_dir)
             self.assertEqual(len(confirmed), 1)
             self.assertEqual(confirmed[0]["subdomain"], "blog.example.com")

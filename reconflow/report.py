@@ -342,19 +342,36 @@ def _js_endpoints_section(js_data):
     cats = js_data.get("categorized_routes", {})
     badges = []
     if cats.get("admin_internal"):
-        badges.append(f"<span class='badge' style='background:#ef4444;'>{len(cats['admin_internal'])} Admin/Internal</span>")
+        cnt = len(cats['admin_internal'])
+        badges.append(
+            f"<span class='badge' style='background:#ef4444;'>{cnt} Admin/Internal</span>"
+        )
     if cats.get("auth_oauth"):
-        badges.append(f"<span class='badge' style='background:#f97316;'>{len(cats['auth_oauth'])} Auth/OAuth</span>")
+        cnt = len(cats['auth_oauth'])
+        badges.append(
+            f"<span class='badge' style='background:#f97316;'>{cnt} Auth/OAuth</span>"
+        )
     if cats.get("graphql"):
-        badges.append(f"<span class='badge' style='background:#8b5cf6;'>{len(cats['graphql'])} GraphQL</span>")
+        cnt = len(cats['graphql'])
+        badges.append(
+            f"<span class='badge' style='background:#8b5cf6;'>{cnt} GraphQL</span>"
+        )
     if cats.get("api_rest"):
-        badges.append(f"<span class='badge' style='background:#3b82f6;'>{len(cats['api_rest'])} REST API</span>")
+        cnt = len(cats['api_rest'])
+        badges.append(
+            f"<span class='badge' style='background:#3b82f6;'>{cnt} REST API</span>"
+        )
 
     summary_html = " ".join(badges) or "<span>Endpoints discovered</span>"
 
     rows = []
     # Show high priority routes first
-    prioritized = cats.get("admin_internal", []) + cats.get("auth_oauth", []) + cats.get("graphql", []) + cats.get("api_rest", [])[:20]
+    prioritized = (
+        cats.get("admin_internal", [])
+        + cats.get("auth_oauth", [])
+        + cats.get("graphql", [])
+        + cats.get("api_rest", [])[:20]
+    )
     for r in prioritized[:30]:
         rows.append(f"<tr><td><code>{r}</code></td></tr>")
 
@@ -372,7 +389,12 @@ def _dns_sec_card(dns_data):
     ns = dns_data.get("nameservers", {})
 
     status = dnssec.get("status", "UNKNOWN")
-    ds_color = "#10b981" if status == "SIGNED" else ("#ef4444" if status == "MISCONFIGURED" else "#f59e0b")
+    if status == "SIGNED":
+        ds_color = "#10b981"
+    elif status == "MISCONFIGURED":
+        ds_color = "#ef4444"
+    else:
+        ds_color = "#f59e0b"
     caa_status = caa.get("status", "UNKNOWN")
     caa_color = "#10b981" if caa_status == "PROTECTED" else "#6b7280"
 
@@ -380,17 +402,24 @@ def _dns_sec_card(dns_data):
     if ns.get("has_dangling_ns"):
         dangling_warn = (
             f"<div style='color:#ef4444;font-weight:bold;margin-top:8px;'>"
-            f"⚠️ ALERT: {len(ns.get('dangling_nameservers', []))} dangling/unresolvable nameserver(s) detected!</div>"
+            f"⚠️ ALERT: {len(ns.get('dangling_nameservers', []))} "
+            f"dangling/unresolvable nameserver(s) detected!</div>"
         )
 
-    return f"""
-    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
-      <p><b>DNSSEC:</b> <span class="badge" style="background:{ds_color};">{status}</span> &mdash; {dnssec.get('description', '')}</p>
-      <p><b>CAA Records (RFC 6844):</b> <span class="badge" style="background:{caa_color};">{caa_status}</span> &mdash; {caa.get('summary', '')}</p>
-      <p><b>Nameservers:</b> {ns.get('nameservers_count', 0)} delegations ({', '.join(ns.get('nameservers', []))})</p>
-      {dangling_warn}
-    </div>
-    """
+    ns_list = ", ".join(ns.get("nameservers", []))
+    ds_desc = dnssec.get("description", "")
+    caa_sum = caa.get("summary", "")
+    return (
+        '<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;'
+        'padding:14px;">\n'
+        f'  <p><b>DNSSEC:</b> <span class="badge" style="background:{ds_color};">'
+        f'{status}</span> &mdash; {ds_desc}</p>\n'
+        f'  <p><b>CAA Records (RFC 6844):</b> <span class="badge" '
+        f'style="background:{caa_color};">{caa_status}</span> &mdash; {caa_sum}</p>\n'
+        f'  <p><b>Nameservers:</b> {ns.get("nameservers_count", 0)} delegations ({ns_list})</p>\n'
+        f'  {dangling_warn}\n'
+        '</div>\n'
+    )
 
 
 def _cache_audit_table(findings):
@@ -402,8 +431,11 @@ def _cache_audit_table(findings):
         cc = f.get("cache_control") or "none"
         issues = []
         for issue in f.get("findings", []):
-            color = "#ef4444" if issue.get("severity") == "CRITICAL" else "#f59e0b"
-            issues.append(f"<span style='color:{color};font-weight:bold;'>[{issue.get('severity')}]</span> {issue.get('type')}")
+            sev = issue.get("severity")
+            color = "#ef4444" if sev == "CRITICAL" else "#f59e0b"
+            issues.append(
+                f"<span style='color:{color};font-weight:bold;'>[{sev}]</span> {issue.get('type')}"
+            )
         issues_str = "<br>".join(issues) if issues else "<span style='color:#10b981;'>Clean</span>"
         rows.append(
             f"<tr><td><code>{f.get('url')}</code></td>"
@@ -426,9 +458,13 @@ def _param_matrix_table(matrix_data):
         cnt = cat.get("params_count", 0)
         if cnt == 0:
             continue
-        sample_params = ", ".join(f"<code>{p['name']}</code>" for p in cat.get("matched_params", [])[:10])
+        sample_params = ", ".join(
+            f"<code>{p['name']}</code>" for p in cat.get("matched_params", [])[:10]
+        )
+        desc = cat.get("description", "")
         rows.append(
-            f"<tr><td><b>{cat.get('label')}</b><br><small style='color:#6b7280;'>{cat.get('description')}</small></td>"
+            f"<tr><td><b>{cat.get('label')}</b><br>"
+            f"<small style='color:#6b7280;'>{desc}</small></td>"
             f"<td><b>{cnt}</b></td>"
             f"<td>{sample_params}</td></tr>"
         )
@@ -486,8 +522,10 @@ def build_html_report(domain, output_dir: Path, subdomains, live_hosts,
         _stat("nameservers", len(zone_transfer)),
         _stat("JWTs audited", len(jwt_findings)),
         _stat("JS routes", js_endpoints.get("total_unique_routes", 0) if js_endpoints else 0),
-        _stat("cache audited", len(cache_audits) if cache_audits else 0),
-        _stat("high-value params", param_matrix.get("total_high_value_flagged", 0) if param_matrix else 0),
+        _stat(
+            "high-value params",
+            param_matrix.get("total_high_value_flagged", 0) if param_matrix else 0,
+        ),
     ])
 
     sections = f"""

@@ -47,7 +47,10 @@ def port_scan(live_hosts, output_dir: Path, top_ports: int = 100, rate: int = 10
         "-no-stdin",
         "-json", "-o", str(out_file), "-silent",
     ]
-    print(f"[*] Port scanning {len(clean_hosts)} hosts (top {top_ports} ports, mode: {scan_type})...")
+    print(
+        f"[*] Port scanning {len(clean_hosts)} hosts "
+        f"(top {top_ports} ports, mode: {scan_type})..."
+    )
     subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
 
     results = {}
@@ -78,7 +81,10 @@ def url_collect(domain: str, output_dir: Path):
         return [], []
 
     print(f"[*] Collecting historical URLs for {domain}...")
-    proc = subprocess.run(["gau", "--subs", domain], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    proc = subprocess.run(
+        ["gau", "--subs", domain],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
+    )
     urls = sorted({u.strip() for u in proc.stdout.splitlines() if u.strip()})
 
     (output_dir / "urls.txt").write_text("\n".join(urls), encoding="utf-8")
@@ -107,7 +113,10 @@ def vuln_scan(live_hosts, output_dir: Path, severity: str = "medium,high,critica
 
     if update_templates:
         print("[*] Updating nuclei's default template set...")
-        subprocess.run(["nuclei", "-update-templates", "-silent"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        subprocess.run(
+            ["nuclei", "-update-templates", "-silent"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        )
 
     hosts_file = output_dir / "hosts_for_vulnscan.txt"
     hosts_file.write_text("\n".join(live_hosts), encoding="utf-8")

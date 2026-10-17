@@ -837,7 +837,32 @@ def run_pipeline(domain: str, args) -> dict:
             cve_findings = cve_correlate.correlate_cves(httpx_records, output_dir)
             sm.mark_completed("cve_correlate", {"technologies_flagged": len(cve_findings)})
 
+    # Stage: DNSSEC, CAA & Dangling Nameserver Audit
+    if getattr(args, "dns_sec", False):
+        if sm.is_completed("dns_sec") and (output_dir / "dns_audit.json").exists():
+            print(f"[*] Resuming: loading DNS security audit from {output_dir / 'dns_audit.json'}")
+            try:
+                dns_sec_data = json.loads(
+                    (output_dir / "dns_audit.json").read_text(encoding="utf-8")
+                )
+            except Exception:
+                dns_sec_data = dns_sec.audit_dns_security(domain, output_dir)
+        else:
+            dns_sec_data = dns_sec.audit_dns_security(domain, output_dir)
+            sm.mark_completed("dns_sec", {
+                "dnssec": dns_sec_data.get("dnssec", {}).get("status"),
+                "has_dangling_ns": dns_sec_data.get("nameservers", {}).get(
+                    "has_dangling_ns", False
+                ),
+            })
+
     extra_md = []
+    if dns_sec_data:
+        ns_sec = dns_sec_data.get("nameservers", {})
+        if ns_sec.get("has_dangling_ns"):
+            extra_md.append(
+                f"- Dangling Nameservers: **{len(ns_sec.get('dangling_nameservers', []))}**"
+            )
     if ports_by_host:
         extra_md.append(f"- Hosts with open ports: **{len(ports_by_host)}**")
     if urls:
@@ -968,6 +993,10 @@ def run_pipeline(domain: str, args) -> dict:
             permutation_count=len(permutation_results),
             zone_transfer=zone_transfer_findings,
             jwt_findings=jwt_findings,
+            js_endpoints=js_endpoints_data,
+            dns_sec=dns_sec_data,
+            cache_audits=cache_audit_data,
+            param_matrix=param_matrix_data,
         )
 
     if getattr(args, "sarif", False):

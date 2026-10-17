@@ -23,7 +23,9 @@ PARAM_CATEGORIES = {
     },
     "idor_bola": {
         "label": "IDOR / BOLA",
-        "description": "Object, account, user, and entity identifiers prone to access control flaws",
+        "description": (
+            "Object, account, user, and entity identifiers prone to access control flaws"
+        ),
         "keywords": {
             "id", "user_id", "userid", "account_id", "accountid", "doc_id", "uuid",
             "org_id", "orgid", "profile_id", "order_id", "customer_id", "file_id",
@@ -32,7 +34,9 @@ PARAM_CATEGORIES = {
     },
     "admin_bypass": {
         "label": "Admin / Privilege / Debug",
-        "description": "Flags, roles, and modes that may trigger administrative functionality or bypasses",
+        "description": (
+            "Flags, roles, and modes that may trigger administrative functionality or bypasses"
+        ),
         "keywords": {
             "admin", "debug", "test", "internal", "dev", "role", "preview",
             "is_admin", "root", "view_as", "impersonate", "super", "bypass",
@@ -41,7 +45,9 @@ PARAM_CATEGORIES = {
     },
     "sqli_injection": {
         "label": "SQLi / Command / Injection",
-        "description": "Search, filter, ordering, and execution parameters susceptible to query injection",
+        "description": (
+            "Search, filter, ordering, and execution parameters susceptible to query injection"
+        ),
         "keywords": {
             "query", "q", "search", "filter", "order", "sort", "column", "cmd",
             "exec", "sql", "select", "table", "group", "limit", "where", "expression",
@@ -50,7 +56,9 @@ PARAM_CATEGORIES = {
     },
     "path_traversal_lfi": {
         "label": "Path Traversal / LFI",
-        "description": "File system paths, templates, and view includes prone to arbitrary read/traversal",
+        "description": (
+            "File system paths, templates, and view includes prone to arbitrary read/traversal"
+        ),
         "keywords": {
             "file", "path", "template", "include", "page", "doc", "folder",
             "load", "view", "source", "filepath", "filename", "read", "layout"
@@ -69,7 +77,11 @@ def classify_parameter(param_name: str) -> List[str]:
         else:
             # Check prefix/suffix substrings for compound param names like user_id, redirect_url
             for kw in cat_data["keywords"]:
-                if len(kw) > 3 and (param_clean.startswith(f"{kw}_") or param_clean.endswith(f"_{kw}")):
+                is_compound = (
+                    len(kw) > 3
+                    and (param_clean.startswith(f"{kw}_") or param_clean.endswith(f"_{kw}"))
+                )
+                if is_compound:
                     matches.append(cat_key)
                     break
     return list(set(matches))
@@ -140,5 +152,8 @@ def analyze_parameters(
     out_file = output_dir / "param_matrix.json"
     out_file.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
-    print(f"[+] Parameter matrix generated ({total_high_value} high-value candidates categorized) -> {out_file.name}")
+    print(
+        f"[+] Parameter matrix generated "
+        f"({total_high_value} high-value candidates categorized) -> {out_file.name}"
+    )
     return result

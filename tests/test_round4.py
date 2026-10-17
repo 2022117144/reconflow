@@ -9,10 +9,9 @@ import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 import tempfile
-import json
 
 from reconflow.js_endpoints import extract_routes_from_text
-from reconflow.dns_sec import audit_dnssec, audit_caa, audit_nameservers, audit_dns_security
+from reconflow.dns_sec import audit_dnssec, audit_caa, audit_nameservers
 from reconflow.cache_audit import audit_host_cache
 from reconflow.params_analyzer import classify_parameter, analyze_parameters
 from reconflow.sarif import generate_sarif
@@ -29,7 +28,11 @@ class TestJSEndpoints(unittest.TestCase):
         const mutation = "mutation DeleteAccount { deleteUser { success } }";
         '''
         res = extract_routes_from_text(js_sample, domain="example.com")
-        self.assertTrue(any("checkout" in r for r in res["all_routes"]) or any("users" in r for r in res["all_routes"]))
+        has_route = (
+            any("checkout" in r for r in res["all_routes"])
+            or any("users" in r for r in res["all_routes"])
+        )
+        self.assertTrue(has_route)
         self.assertTrue(len(res["graphql_operations"]) >= 2)
         self.assertIn("client_id", res["parameters"])
 
@@ -144,8 +147,16 @@ class TestExportIntegrations(unittest.TestCase):
                 {
                     "url": "https://example.com/a.css",
                     "findings": [
-                        {"type": "SENSITIVE_DATA_PUBLIC_CACHE", "severity": "CRITICAL", "description": "Public Cookie"},
-                        {"type": "UNKEYED_HEADER_REFLECTION", "severity": "HIGH", "description": "Reflection"}
+                        {
+                            "type": "SENSITIVE_DATA_PUBLIC_CACHE",
+                            "severity": "CRITICAL",
+                            "description": "Public Cookie",
+                        },
+                        {
+                            "type": "UNKEYED_HEADER_REFLECTION",
+                            "severity": "HIGH",
+                            "description": "Reflection",
+                        },
                     ]
                 }
             ]
@@ -188,7 +199,11 @@ class TestExportIntegrations(unittest.TestCase):
                 "url": "https://example.com/profile.css",
                 "cdn_detected": "Cloudflare",
                 "cache_control": "public, max-age=3600",
-                "findings": [{"severity": "CRITICAL", "type": "SENSITIVE_DATA_PUBLIC_CACHE", "description": "Public Set-Cookie"}]
+                "findings": [{
+                    "severity": "CRITICAL",
+                    "type": "SENSITIVE_DATA_PUBLIC_CACHE",
+                    "description": "Public Set-Cookie",
+                }]
             }
         ]
         param_matrix = {
