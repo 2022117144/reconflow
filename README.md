@@ -110,7 +110,7 @@ reconflow detects Fedora and Red Hat derivatives at runtime and provides native 
 ## Usage
 
 ```bash
-python reconflow_v2.py -d example.com --full --notify https://discord.com/api/webhooks/...
+python reconflow_v2.py -d example.com --full -H "X-Bug-Bounty: hackerone-username" --notify https://discord.com/api/webhooks/...
 ```
 
 | Option | Description |
@@ -120,6 +120,7 @@ python reconflow_v2.py -d example.com --full --notify https://discord.com/api/we
 | `-o`, `--output` | Output folder (default: `output`) |
 | `-c`, `--config` | Path to custom YAML/JSON config file (default: `reconflow.yaml`) |
 | `--resume` | Resume an interrupted scan without rerunning completed stages |
+| `-H`, `--header HEADER` | Custom HTTP header for httpx probing (repeatable, e.g. `-H "X-Bug-Bounty: user"`) |
 | `--threads` | Number of threads for httpx probing (default: httpx default) |
 | `--timeout` | Timeout in seconds for httpx probing (default: httpx default) |
 | `--json` | Also write results to `report.json` |
@@ -320,6 +321,7 @@ screenshots/            captured screenshots of live hosts (when using --screens
 - [x] CDN edge caching & Web Cache Deception auditing (`--cache-audit`)
 - [x] Bug bounty parameter vulnerability classification matrix (`--param-miner`)
 - [x] Differential recon & change tracking (`--diff`)
+- [x] Custom HTTP request headers for bug bounty identification (`-H` / `--header`)
 
 ## Contributing
 
