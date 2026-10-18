@@ -1,6 +1,6 @@
 [project]
 name = "reconflow"
-version = "0.2.0"
+version = "0.2.1"
 description = "Recon pipeline for bug bounty hunters with differential change tracking"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -45,7 +45,4 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["reconflow", "reconflow.wordlists"]
-
-[tool.setuptools.package-data]
-"reconflow.wordlists" = ["*.txt"]
+packages = ["reconflow"]
