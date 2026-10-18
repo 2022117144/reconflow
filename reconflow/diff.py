@@ -55,7 +55,7 @@ def compare(old, new):
     }
 
 
-def format_diff(diff_result, old_id, new_id):
+def format_diff(diff_result, old_id, new_id, new_data=None):
     """Render a human-readable comparison summary between two runs."""
     lines = [
         f"[*] Recon diff: {old_id} -> {new_id}",
@@ -80,8 +80,31 @@ def format_diff(diff_result, old_id, new_id):
 
     if new_live:
         lines.append(f"\n[+] NEWLY LIVE HOSTS ({len(new_live)}):")
+        hosts_map = {}
+        if new_data and isinstance(new_data, dict):
+            hosts_map = {
+                h["url"]: h
+                for h in (new_data.get("hosts") or [])
+                if isinstance(h, dict) and "url" in h
+            }
         for h in new_live:
-            lines.append(f"    + {h}")
+            meta = hosts_map.get(h)
+            if meta:
+                code = meta.get("status_code")
+                title = meta.get("title")
+                tech = meta.get("technologies") or []
+                parts = []
+                if code:
+                    parts.append(f"[{code}]")
+                if title:
+                    parts.append(f"[{title}]")
+                if tech:
+                    tech_str = ", ".join(tech) if isinstance(tech, list) else str(tech)
+                    parts.append(f"[{tech_str}]")
+                detail = (" " + " ".join(parts)) if parts else ""
+                lines.append(f"    + {h}{detail}")
+            else:
+                lines.append(f"    + {h}")
 
     if changed:
         lines.append(f"\n[*] CHANGED HOSTS ({len(changed)}):")
@@ -164,6 +187,7 @@ def run(args):
             diff_result,
             old_data.get("run_id", old_run.name),
             new_data.get("run_id", new_run.name),
+            new_data=new_data,
         )
         print(output_text)
 
