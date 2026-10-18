@@ -69,6 +69,32 @@ def build_parser():
         help="Capture screenshots of live hosts using gowitness",
     )
 
+    # diff subcommand
+    p_diff = subparsers.add_parser(
+        "diff",
+        help="Compare the latest two scans for a domain",
+        description=(
+            "Compare the latest two scan snapshots to detect "
+            "newly discovered subdomains and host changes."
+        ),
+    )
+    p_diff.add_argument(
+        "domain",
+        help="Target domain to compare runs for",
+    )
+    p_diff.add_argument(
+        "-o",
+        "--output",
+        default="output",
+        help="Output folder (default: output)",
+    )
+    p_diff.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_report",
+        help="Output diff comparison as JSON",
+    )
+
     return parser
 
 
@@ -79,6 +105,10 @@ def main(args=None):
 
     if parsed_args.command == "scan":
         scan.run(parsed_args)
+    elif parsed_args.command == "diff":
+        from . import diff
+
+        diff.run(parsed_args)
     else:
         parser.print_help()
         sys.exit(0)

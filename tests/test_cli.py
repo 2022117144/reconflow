@@ -70,6 +70,23 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(called_args.domain, "example.com")
         self.assertEqual(called_args.threads, 15)
 
+    def test_diff_subcommand_defaults(self):
+        """Parsing 'diff example.com' sets default parameters."""
+        args = self.parser.parse_args(["diff", "example.com"])
+        self.assertEqual(args.command, "diff")
+        self.assertEqual(args.domain, "example.com")
+        self.assertEqual(args.output, "output")
+        self.assertFalse(args.json_report)
+
+    @patch("reconflow.diff.run")
+    def test_main_dispatch_diff(self, mock_diff_run):
+        """main(['diff', 'example.com']) should route to diff.run."""
+        main(["diff", "example.com", "--json"])
+        self.assertTrue(mock_diff_run.called)
+        called_args = mock_diff_run.call_args[0][0]
+        self.assertEqual(called_args.domain, "example.com")
+        self.assertTrue(called_args.json_report)
+
     def test_main_no_args_prints_help(self):
         """main([]) without args should print help and exit cleanly with 0."""
         with patch("sys.stdout", new_callable=io.StringIO) as mock_out:

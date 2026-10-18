@@ -78,6 +78,12 @@ Or execute directly with Python without installing:
 
 ```bash
 python -m reconflow scan example.com
+
+# Compare the latest two scans to detect new subdomains and host changes
+reconflow diff example.com
+
+# Differential output as JSON with exit code 0/1 for cron & alerting
+reconflow diff example.com --json
 ```
 
 ### Docker (Zero Install)
@@ -346,7 +352,7 @@ screenshots/            captured screenshots of live hosts (when using --screens
 - [x] Differential recon & change tracking (`--diff`)
 - [x] Custom HTTP request headers for bug bounty identification (`-H` / `--header`)
 - [x] Package restructure & CLI subcommand routing (`reconflow scan <domain>`)
-- [ ] Subcommand `reconflow diff <domain>` - Dedicated differential monitoring & alerting
+- [x] Subcommand `reconflow diff <domain>` - Dedicated differential monitoring & alerting
 - [ ] Subcommand `reconflow scope <domain> --rules <file>` - Standalone scope validator
 - [ ] Subcommand `reconflow report <domain> --format html,sarif,json` - Standalone report generator
 - [ ] Official PyPI package publication (`pip install reconflow`)

@@ -22,9 +22,58 @@ TOOL_DOWNLOAD_URLS = {
 }
 
 
+def run_cmd(cmd):
+    """Run an external command and return the completed process."""
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+# Backwards compatibility alias
+run_subprocess = run_cmd
+
+
+def resolve_httpx_binary():
+    """Find and verify ProjectDiscovery httpx binary (checking httpx-toolkit then httpx)."""
+    for candidate in ["httpx-toolkit", "httpx"]:
+        if shutil.which(candidate) is None:
+            continue
+        try:
+            res = run_cmd([candidate, "-version"])
+            out = (res.stdout + " " + res.stderr).lower()
+            if "projectdiscovery" in out:
+                return candidate
+            if candidate == "httpx-toolkit":
+                return candidate
+        except Exception:
+            pass
+
+    if shutil.which("httpx"):
+        try:
+            res = run_cmd(["httpx", "-h"])
+            out = (res.stdout + " " + res.stderr).lower()
+            if "projectdiscovery" in out or "-status-code" in out:
+                return "httpx"
+        except Exception:
+            pass
+        return "httpx"
+    return None
+
+
 def check_tools(tools):
     """Check that required external binaries are available in PATH."""
-    missing = [t for t in tools if shutil.which(t) is None]
+    missing = []
+    for t in tools:
+        if t == "httpx":
+            if not resolve_httpx_binary():
+                missing.append("httpx")
+        elif shutil.which(t) is None:
+            missing.append(t)
+
     if missing:
         lines = [
             f"[!] Missing required tools: {', '.join(missing)}",
@@ -41,21 +90,6 @@ def check_tools(tools):
         )
         lines.append("      not the Python 'httpx' library from PyPI.")
         sys.exit("\n".join(lines))
-
-
-def run_cmd(cmd):
-    """Run an external command and return the completed process."""
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-
-
-# Backwards compatibility alias
-run_subprocess = run_cmd
 
 
 def resolve(host):
@@ -118,11 +152,19 @@ def find_subdomains(domain, out_file):
     return subs_sorted
 
 
-def probe_hosts(subs_file, out_file, threads=None, timeout=None, json_report=False):
+def probe_hosts(
+    subs_file,
+    out_file,
+    threads=None,
+    timeout=None,
+    json_report=False,
+    httpx_bin=None,
+):
     """Probe subdomains for live HTTP/HTTPS services using httpx."""
+    bin_name = httpx_bin or resolve_httpx_binary() or "httpx"
     print("[*] Probing for live hosts (this can take a while on big targets)...")
     cmd = [
-        "httpx",
+        bin_name,
         "-l",
         str(subs_file),
         "-silent",
@@ -142,7 +184,7 @@ def probe_hosts(subs_file, out_file, threads=None, timeout=None, json_report=Fal
     with subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -309,14 +351,16 @@ def run(args):
         if not subs:
             print("[!] No subdomains left to probe.")
             live = []
-            hosts_data = [] if json_report else None
+            hosts_data = []
         else:
+            httpx_bin = resolve_httpx_binary() or "httpx"
             live, hosts_data = probe_hosts(
                 out_dir / "subdomains.txt",
                 out_dir / "live.txt",
                 threads=threads,
                 timeout=timeout,
-                json_report=json_report,
+                json_report=True,
+                httpx_bin=httpx_bin,
             )
             if screenshots_enabled and live:
                 screenshots = capture_screenshots(live, out_dir / "screenshots")
@@ -328,13 +372,21 @@ def run(args):
             out_dir,
             wildcard_ips=wildcard_ips,
             dropped=dropped,
-            hosts_data=hosts_data,
+            hosts_data=(hosts_data if json_report else None),
             screenshots=screenshots,
         )
+
+        from . import history
+
+        run_id = history.save_snapshot(out_dir, subs, hosts_data or [])
+        print(f"[+] Saved scan snapshot ({run_id})")
+
         return {
             "domain": domain,
+            "run_id": run_id,
             "subdomains": subs,
             "live": live,
+            "hosts": hosts_data or [],
             "output_dir": str(out_dir),
         }
     except KeyboardInterrupt:
