@@ -3,54 +3,66 @@
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 from . import history
+
+
+# Tags that flip between runs because of CDN/transport behavior, not app changes
+IGNORED_TECH = {"HTTP/2", "HTTP/3", "HSTS"}
+
+
+def _hostname(url):
+    return (urlparse(url).hostname or url).lower()
+
+
+def _by_host(hosts):
+    """Map hostname -> host record. If a host answers on both schemes, prefer https."""
+    result = {}
+    for h in hosts or []:
+        if not isinstance(h, dict) or "url" not in h:
+            continue
+        name = _hostname(h["url"])
+        current = result.get(name)
+        if current is None or (
+            h["url"].startswith("https://") and not current["url"].startswith("https://")
+        ):
+            result[name] = h
+    return result
+
+
+def _meaningful_tech(tech):
+    return {t for t in (tech or []) if t not in IGNORED_TECH}
 
 
 def compare(old, new):
     """Compare two scan snapshots and return differences.
 
-    Parameters:
-        old (dict): Previous snapshot containing 'subdomains' and 'hosts'.
-        new (dict): Recent snapshot containing 'subdomains' and 'hosts'.
-
-    Returns:
-        dict: Categorized differences (new_subdomains, removed_subdomains,
-              new_live, gone_live, changed).
+    Hosts are matched by hostname, so a scheme flip (http <-> https) is not
+    reported as one host disappearing and another appearing.
     """
-    old_hosts = {
-        h["url"]: h
-        for h in (old.get("hosts") or [])
-        if isinstance(h, dict) and "url" in h
-    }
-    new_hosts = {
-        h["url"]: h
-        for h in (new.get("hosts") or [])
-        if isinstance(h, dict) and "url" in h
-    }
+    old_hosts = _by_host(old.get("hosts"))
+    new_hosts = _by_host(new.get("hosts"))
 
     changed = {}
-    for url in old_hosts.keys() & new_hosts.keys():
-        o, n = old_hosts[url], new_hosts[url]
+    for name in old_hosts.keys() & new_hosts.keys():
+        o, n = old_hosts[name], new_hosts[name]
         diffs = {}
         if o.get("status_code") != n.get("status_code"):
             diffs["status_code"] = (o.get("status_code"), n.get("status_code"))
         if o.get("title") != n.get("title"):
             diffs["title"] = (o.get("title"), n.get("title"))
-        old_tech = sorted(o.get("technologies") or [])
-        new_tech = sorted(n.get("technologies") or [])
-        if old_tech != new_tech:
+        if _meaningful_tech(o.get("technologies")) != _meaningful_tech(n.get("technologies")):
             diffs["technologies"] = (o.get("technologies") or [], n.get("technologies") or [])
         if diffs:
-            changed[url] = diffs
+            changed[n["url"]] = diffs
 
     old_subs = set(old.get("subdomains") or [])
     new_subs = set(new.get("subdomains") or [])
-
     return {
         "new_subdomains": sorted(new_subs - old_subs),
         "removed_subdomains": sorted(old_subs - new_subs),
-        "new_live": sorted(new_hosts.keys() - old_hosts.keys()),
-        "gone_live": sorted(old_hosts.keys() - new_hosts.keys()),
+        "new_live": sorted(new_hosts[h]["url"] for h in new_hosts.keys() - old_hosts.keys()),
+        "gone_live": sorted(old_hosts[h]["url"] for h in old_hosts.keys() - new_hosts.keys()),
         "changed": changed,
     }
 
