@@ -48,9 +48,9 @@ def build_parser():
     )
     p_scan.add_argument(
         "--timeout",
-        type=float,
-        default=5.0,
-        help="Timeout in seconds for probing (default: 5.0)",
+        type=int,
+        default=5,
+        help="Timeout in seconds for probing (default: 5)",
     )
     p_scan.add_argument(
         "--keep-wildcard",

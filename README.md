@@ -61,7 +61,7 @@ You can also run it as a module: `python -m reconflow scan example.com`
 | `domain` | Target domain (required, must be in scope) |
 | `-o`, `--output` | Output folder (default: `output`) |
 | `--threads` | Number of threads for probing (default: 10) |
-| `--timeout` | Timeout in seconds for probing (default: 5.0) |
+| `--timeout` | Timeout in seconds for probing (default: 5) |
 | `--keep-wildcard` | Warn about wildcard DNS but don't filter wildcard results |
 | `--json` | Also write structured results to `report.json` |
 | `--screenshots` | Capture screenshots of live hosts (requires gowitness) |

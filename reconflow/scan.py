@@ -177,10 +177,11 @@ def probe_hosts(
     if threads is not None:
         cmd.extend(["-threads", str(threads)])
     if timeout is not None:
-        cmd.extend(["-timeout", str(timeout)])
+        cmd.extend(["-timeout", str(int(timeout))])
 
     lines = []
     hosts_data = []
+    error_lines = []
     with subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -215,12 +216,21 @@ def probe_hosts(
                     lines.append(display)
                     print(f"[*] [{len(lines)} alive] {display}")
                 except json.JSONDecodeError:
+                    error_lines.append(stripped)
+            else:
+                if stripped.startswith("http://") or stripped.startswith("https://"):
                     lines.append(stripped)
                     print(f"[*] [{len(lines)} alive] {stripped}")
-            else:
-                lines.append(stripped)
-                print(f"[*] [{len(lines)} alive] {stripped}")
+                else:
+                    error_lines.append(stripped)
         proc.wait()
+
+    if proc.returncode != 0:
+        if error_lines:
+            err_msg = "\n".join(error_lines)
+            print(f"[!] httpx probing error (exit code {proc.returncode}):\n{err_msg}")
+        elif not lines:
+            print(f"[!] httpx probing failed (exit code {proc.returncode})")
 
     out_file.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     print(f"[+] Probing complete: {len(lines)} hosts are alive")
@@ -413,9 +423,9 @@ def main():
     )
     parser.add_argument(
         "--timeout",
-        type=float,
-        default=None,
-        help="timeout in seconds for httpx probing (default: httpx default)",
+        type=int,
+        default=5,
+        help="timeout in seconds for httpx probing (default: 5)",
     )
     parser.add_argument(
         "--json",

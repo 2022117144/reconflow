@@ -32,7 +32,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.domain, "example.com")
         self.assertEqual(args.output, "output")
         self.assertEqual(args.threads, 10)
-        self.assertEqual(args.timeout, 5.0)
+        self.assertEqual(args.timeout, 5)
         self.assertFalse(args.keep_wildcard)
         self.assertFalse(args.json_report)
         self.assertFalse(args.screenshots)
@@ -47,7 +47,7 @@ class TestCLI(unittest.TestCase):
             "--threads",
             "25",
             "--timeout",
-            "12.5",
+            "15",
             "--keep-wildcard",
             "--json",
             "--screenshots",
@@ -56,7 +56,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(args.domain, "target.test")
         self.assertEqual(args.output, "custom_output")
         self.assertEqual(args.threads, 25)
-        self.assertEqual(args.timeout, 12.5)
+        self.assertEqual(args.timeout, 15)
         self.assertTrue(args.keep_wildcard)
         self.assertTrue(args.json_report)
         self.assertTrue(args.screenshots)
@@ -128,7 +128,7 @@ class TestScanRunner(unittest.TestCase):
                 domain="example.com",
                 output=tmpdir,
                 threads=10,
-                timeout=5.0,
+                timeout=5,
                 keep_wildcard=False,
                 json_report=False,
                 json=False,
@@ -166,6 +166,46 @@ class TestScanRunner(unittest.TestCase):
         from reconflow.scan import check_tools
 
         check_tools(["subfinder", "httpx"])
+
+    @patch("subprocess.Popen")
+    def test_probe_hosts_integer_timeout_and_ignores_error_lines(self, mock_popen):
+        """probe_hosts should pass integer timeout to httpx and ignore non-JSON errors."""
+        from reconflow.scan import probe_hosts
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([
+            'invalid value "5.0" for flag -timeout: parse error\n',
+            '{"url": "https://valid.test", "status_code": 200, "title": "OK"}\n',
+        ])
+        mock_proc.wait.return_value = None
+        mock_proc.returncode = 0
+        mock_proc.__enter__.return_value = mock_proc
+        mock_proc.__exit__.return_value = None
+        mock_popen.return_value = mock_proc
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subs_file = Path(tmpdir) / "subs.txt"
+            subs_file.write_text("valid.test\n", encoding="utf-8")
+            out_file = Path(tmpdir) / "live.txt"
+
+            lines, hosts_data = probe_hosts(
+                subs_file,
+                out_file,
+                timeout=5.0,
+                json_report=True,
+            )
+
+            # Check that cmd received string integer '5'
+            called_cmd = mock_popen.call_args[0][0]
+            self.assertIn("-timeout", called_cmd)
+            timeout_idx = called_cmd.index("-timeout")
+            self.assertEqual(called_cmd[timeout_idx + 1], "5")
+
+            # Check that error line was NOT counted as live host
+            self.assertEqual(len(lines), 1)
+            self.assertIn("https://valid.test", lines[0])
+            self.assertEqual(len(hosts_data), 1)
+            self.assertEqual(hosts_data[0]["url"], "https://valid.test")
 
 
 if __name__ == "__main__":
