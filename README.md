@@ -1,6 +1,12 @@
 # reconflow
 
+[![PyPI](https://img.shields.io/pypi/v/reconflow)](https://pypi.org/project/reconflow/)
+
 Recon for bug bounty hunters that tells you **what changed** since your last scan.
+
+```bash
+pip install reconflow
+```
 
 `reconflow` chains [subfinder](https://github.com/projectdiscovery/subfinder) and [httpx](https://github.com/projectdiscovery/httpx) into one command, filters out wildcard DNS noise, saves a snapshot of every run, and lets you `diff` any two runs to see new subdomains, newly live hosts, and changed responses.
 
