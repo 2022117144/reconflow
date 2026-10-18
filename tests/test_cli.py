@@ -1,6 +1,7 @@
 """Unit tests for reconflow CLI, subcommand routing, and scan runner."""
 
 import io
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -195,11 +196,12 @@ class TestScanRunner(unittest.TestCase):
                 json_report=True,
             )
 
-            # Check that cmd received string integer '5'
+            # Check that cmd received string integer '5' and stdin is DEVNULL
             called_cmd = mock_popen.call_args[0][0]
             self.assertIn("-timeout", called_cmd)
             timeout_idx = called_cmd.index("-timeout")
             self.assertEqual(called_cmd[timeout_idx + 1], "5")
+            self.assertEqual(mock_popen.call_args[1].get("stdin"), subprocess.DEVNULL)
 
             # Check that error line was NOT counted as live host
             self.assertEqual(len(lines), 1)

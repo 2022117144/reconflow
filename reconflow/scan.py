@@ -26,6 +26,7 @@ def run_cmd(cmd):
     """Run an external command and return the completed process."""
     return subprocess.run(
         cmd,
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -184,6 +185,7 @@ def probe_hosts(
     error_lines = []
     with subprocess.Popen(
         cmd,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
