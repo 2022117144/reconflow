@@ -1,6 +1,8 @@
 # reconflow
 
-Subdomain discovery, live host probing, port scanning, historical URLs, vulnerability scanning, JS secret scanning, and endpoint fuzzing in **one command**.
+Recon for bug bounty hunters that tells you **what changed since your last scan**.
+
+Subdomain discovery, live host probing, and differential change detection in **one command**.
 
 `reconflow` chains [subfinder](https://github.com/projectdiscovery/subfinder), [httpx](https://github.com/projectdiscovery/httpx), [naabu](https://github.com/projectdiscovery/naabu), [nuclei](https://github.com/projectdiscovery/nuclei), [gau](https://github.com/lc/gau), and [ffuf](https://github.com/ffuf/ffuf) into a single workflow with streaming results, resumable runs, and clean Markdown, JSON, SARIF, and HTML reports.
 
@@ -58,6 +60,67 @@ Subdomain discovery, live host probing, port scanning, historical URLs, vulnerab
 - [`gowitness`](https://github.com/sensepost/gowitness/releases) — optional, for `--screenshots`
 
 Every stage degrades gracefully: if a tool isn't installed, reconflow prints a warning and skips that stage instead of crashing.
+
+## Track changes with `diff`
+
+Most recon tools tell you what exists. `reconflow` also tells you **what changed**. New subdomains and newly live hosts are often the least-tested parts of a target, which makes them the most valuable attack surface for bug hunters.
+
+Every scan automatically preserves a snapshot in `output/<domain>/runs/`. Run `reconflow diff` to compare the two most recent scans:
+
+```bash
+reconflow scan example.com
+# ...later, after the target updates or on a recurring cron schedule...
+reconflow scan example.com
+reconflow diff example.com
+```
+
+### Real Sample Output
+
+```text
+[*] Recon diff: 2026-10-18_093012 -> 2026-10-18_153045
+============================================================
+
+[+] NEW SUBDOMAINS (2):
+    + beta.example.com
+    + staging-api.example.com
+
+[+] NEWLY LIVE HOSTS (1):
+    + https://beta.example.com [200] [Beta Portal] [Nginx, React]
+
+[*] CHANGED HOSTS (1):
+    ~ https://admin.example.com
+        status: 403 -> 200
+        title: 'Forbidden' -> 'Admin Login'
+        tech: ['Apache'] -> ['Apache', 'PHP']
+
+[-] Removed subdomains (1) [informational]:
+    - old.example.com
+
+============================================================
+```
+
+> **Note on false alarms:** Discovery sources like subfinder can fluctuate slightly between runs due to rate limits. `reconflow` treats **new subdomains** and **newly live hosts** as the headline, while categorizing removed assets as informational reference.
+
+### Options & Automation
+
+| Option | Description |
+| --- | --- |
+| `--json` | Print structured diff output as JSON for custom scripts & alerting bots |
+| `-o`, `--output` | Custom output directory (default: `output`) |
+
+### Exit Codes for Cron
+
+| Code | Meaning | Action |
+| --- | --- | --- |
+| `0` | No changes found | Target unchanged |
+| `1` | Changes detected | New subdomains or host changes found |
+
+Easily schedule continuous differential monitoring via cron:
+
+```bash
+# Every 6 hours: rescan and log changes when new assets appear
+0 */6 * * * reconflow scan example.com && reconflow diff example.com >> ~/recon-changes.log
+```
 
 ## Quickstart
 
@@ -352,10 +415,11 @@ screenshots/            captured screenshots of live hosts (when using --screens
 - [x] Differential recon & change tracking (`--diff`)
 - [x] Custom HTTP request headers for bug bounty identification (`-H` / `--header`)
 - [x] Package restructure & CLI subcommand routing (`reconflow scan <domain>`)
-- [x] Subcommand `reconflow diff <domain>` - Dedicated differential monitoring & alerting
-- [ ] Subcommand `reconflow scope <domain> --rules <file>` - Standalone scope validator
-- [ ] Subcommand `reconflow report <domain> --format html,sarif,json` - Standalone report generator
-- [ ] Official PyPI package publication (`pip install reconflow`)
+- [x] Scan history snapshots and `reconflow diff <domain>`
+- [ ] `reconflow scope` (scope checking)
+- [ ] `reconflow report` (HTML/JSON report regeneration)
+- [ ] `--notify` webhook alerts (Discord/Slack)
+- [ ] PyPI package publication (`pip install reconflow`)
 
 ## Contributing
 
