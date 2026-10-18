@@ -74,7 +74,7 @@ reconflow scan example.com
 reconflow diff example.com
 ```
 
-### Real Sample Output
+### Example output
 
 ```text
 [*] Recon diff: 2026-10-18_093012 -> 2026-10-18_153045

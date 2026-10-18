@@ -1,12 +1,23 @@
 [project]
 name = "reconflow"
 version = "0.2.0"
-description = "Recon pipeline for bug bounty hunters"
+description = "Recon pipeline for bug bounty hunters with differential change tracking"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [
     { name = "Nithishvelan M", email = "mnithishvelan@gmail.com" }
+]
+keywords = [
+    "bugbounty",
+    "recon",
+    "reconnaissance",
+    "subdomain",
+    "subfinder",
+    "httpx",
+    "differential",
+    "security",
+    "infosec",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -18,7 +29,13 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Security",
+    "Intended Audience :: Information Technology",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ErenYeager1836/reconflow"
+Repository = "https://github.com/ErenYeager1836/reconflow"
+Issues = "https://github.com/ErenYeager1836/reconflow/issues"
 
 [project.scripts]
 reconflow = "reconflow.cli:main"
@@ -27,9 +44,8 @@ reconflow = "reconflow.cli:main"
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["reconflow*"]
+[tool.setuptools]
+packages = ["reconflow"]
 
 [tool.setuptools.package-data]
 reconflow = ["wordlists/*.txt"]
