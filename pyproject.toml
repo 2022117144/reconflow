@@ -45,7 +45,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["reconflow"]
+packages = ["reconflow", "reconflow.wordlists"]
 
 [tool.setuptools.package-data]
-reconflow = ["wordlists/*.txt"]
+"reconflow.wordlists" = ["*.txt"]
