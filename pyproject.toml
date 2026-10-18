@@ -4,9 +4,10 @@ version = "0.2.1"
 description = "Recon pipeline for bug bounty hunters with differential change tracking"
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" }
+license = "MIT"
+license-files= ["LICENSE"]
 authors = [
-    { name = "Nithishvelan M", email = "mnithishvelan@gmail.com" }
+    { name = "Nithishvelan M" }
 ]
 keywords = [
     "bugbounty",
@@ -26,7 +27,6 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Intended Audience :: Information Technology",
@@ -41,7 +41,7 @@ Issues = "https://github.com/ErenYeager1836/reconflow/issues"
 reconflow = "reconflow.cli:main"
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
