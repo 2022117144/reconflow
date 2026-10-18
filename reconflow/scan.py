@@ -15,11 +15,32 @@ from pathlib import Path
 RESOLVE_THREADS = 50
 
 
+TOOL_DOWNLOAD_URLS = {
+    "subfinder": "https://github.com/projectdiscovery/subfinder/releases",
+    "httpx": "https://github.com/projectdiscovery/httpx/releases (ProjectDiscovery Go binary)",
+    "gowitness": "https://github.com/sensepost/gowitness/releases",
+}
+
+
 def check_tools(tools):
     """Check that required external binaries are available in PATH."""
     missing = [t for t in tools if shutil.which(t) is None]
     if missing:
-        sys.exit(f"Missing tools: {', '.join(missing)}. See README for install steps.")
+        lines = [
+            f"[!] Missing required tools: {', '.join(missing)}",
+            "",
+            "Installation links:",
+        ]
+        for t in missing:
+            url = TOOL_DOWNLOAD_URLS.get(t, "See README for details")
+            lines.append(f"  - {t}: {url}")
+        lines.append("")
+        lines.append(
+            "Note: 'httpx' must be ProjectDiscovery's binary "
+            "(https://github.com/projectdiscovery/httpx),"
+        )
+        lines.append("      not the Python 'httpx' library from PyPI.")
+        sys.exit("\n".join(lines))
 
 
 def run_cmd(cmd):

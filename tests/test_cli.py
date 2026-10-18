@@ -130,6 +130,26 @@ class TestScanRunner(unittest.TestCase):
             self.assertIn("# reconflow report: example.com", content)
             self.assertIn("https://sub.example.com [200]", content)
 
+    @patch("shutil.which")
+    def test_check_tools_missing(self, mock_which):
+        """check_tools should exit with installation links when tools are missing."""
+        from reconflow.scan import check_tools
+
+        mock_which.return_value = None
+        with self.assertRaises(SystemExit) as cm:
+            check_tools(["subfinder", "httpx"])
+        err_msg = str(cm.exception)
+        self.assertIn("Missing required tools", err_msg)
+        self.assertIn("projectdiscovery/subfinder", err_msg)
+        self.assertIn("projectdiscovery/httpx", err_msg)
+
+    @patch("shutil.which", return_value="/usr/bin/tool")
+    def test_check_tools_present(self, mock_which):
+        """check_tools should pass silently when all tools are installed."""
+        from reconflow.scan import check_tools
+
+        check_tools(["subfinder", "httpx"])
+
 
 if __name__ == "__main__":
     unittest.main()

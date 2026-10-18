@@ -50,6 +50,7 @@ Subdomain discovery, live host probing, port scanning, historical URLs, vulnerab
 
 - Python 3.8+ (no extra Python packages needed for the core flow)
 - [`subfinder`](https://github.com/projectdiscovery/subfinder/releases) and [`httpx`](https://github.com/projectdiscovery/httpx/releases) — required
+  > **Note on `httpx`:** reconflow requires **[ProjectDiscovery's httpx](https://github.com/projectdiscovery/httpx)** (Go binary), **not** the Python `pip install httpx` library or CLI. On Debian/Kali/Ubuntu, install it with `sudo apt install httpx-toolkit` (or via `go install` / GitHub Releases).
 - [`naabu`](https://github.com/projectdiscovery/naabu/releases) — optional, for `--ports` (uses `--port-scan-type connect` by default on Windows/Linux without requiring root or Npcap)
 - [`nuclei`](https://github.com/projectdiscovery/nuclei/releases) — optional, for `--vuln`
 - [`gau`](https://github.com/lc/gau) — optional, for `--urls` and `--secrets`
@@ -58,7 +59,28 @@ Subdomain discovery, live host probing, port scanning, historical URLs, vulnerab
 
 Every stage degrades gracefully: if a tool isn't installed, reconflow prints a warning and skips that stage instead of crashing.
 
-## Quickstart with Docker (Zero Install)
+## Quickstart
+
+### Package Installation (recommended)
+
+Clone and install in editable mode:
+
+```bash
+git clone https://github.com/ErenYeager1836/reconflow.git
+cd reconflow
+pip install -e .
+
+# Run recon on a target domain
+reconflow scan example.com
+```
+
+Or execute directly with Python without installing:
+
+```bash
+python -m reconflow scan example.com
+```
+
+### Docker (Zero Install)
 
 Run the full toolchain with no manual setup:
 
@@ -119,6 +141,7 @@ python reconflow_v2.py -d example.com --full -H "X-Bug-Bounty: hackerone-usernam
 | `-dL`, `--targets-file FILE` | Batch scan multiple domains listed in a file (one per line) |
 | `-o`, `--output` | Output folder (default: `output`) |
 | `-c`, `--config` | Path to custom YAML/JSON config file (default: `reconflow.yaml`) |
+| `--keep-wildcard` | Warn about wildcard DNS but do not filter wildcard results |
 | `--resume` | Resume an interrupted scan without rerunning completed stages |
 | `-H`, `--header HEADER` | Custom HTTP header for httpx probing (repeatable, e.g. `-H "X-Bug-Bounty: user"`) |
 | `--threads` | Number of threads for httpx probing (default: httpx default) |
@@ -220,8 +243,8 @@ notify:
 [+] Found 1 potential secret(s) — review secrets.json
 [*] Fuzzing endpoints across 8 live hosts with ffuf...
 [+] ffuf discovered 5 endpoints
-[+] HTML report saved to output\example.com\report.html
-[+] Report saved to output\example.com\report.md
+[+] HTML report saved to output/example.com/report.html
+[+] Report saved to output/example.com/report.md
 ```
 
 Files created in `output/<domain>/`:
@@ -322,6 +345,11 @@ screenshots/            captured screenshots of live hosts (when using --screens
 - [x] Bug bounty parameter vulnerability classification matrix (`--param-miner`)
 - [x] Differential recon & change tracking (`--diff`)
 - [x] Custom HTTP request headers for bug bounty identification (`-H` / `--header`)
+- [x] Package restructure & CLI subcommand routing (`reconflow scan <domain>`)
+- [ ] Subcommand `reconflow diff <domain>` - Dedicated differential monitoring & alerting
+- [ ] Subcommand `reconflow scope <domain> --rules <file>` - Standalone scope validator
+- [ ] Subcommand `reconflow report <domain> --format html,sarif,json` - Standalone report generator
+- [ ] Official PyPI package publication (`pip install reconflow`)
 
 ## Contributing
 
