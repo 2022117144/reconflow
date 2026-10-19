@@ -102,6 +102,28 @@ reconflow scope scope.txt api.example.com admin.example.com 192.168.1.10
 
 `diff` needs at least two saved scans of the same domain. Run `scan` twice first.
 
+### `report`
+
+Regenerate Markdown (`report.md`) and JSON (`report.json`) reports from an existing scan snapshot without re-running any network discovery or probing:
+
+```bash
+# Regenerate report from the latest scan
+reconflow report example.com
+
+# Regenerate report for a specific historical scan run
+reconflow report example.com --run 2026-10-18_185218
+
+# Output structured report as JSON
+reconflow report example.com --json
+```
+
+| Option | Description |
+| --- | --- |
+| `domain` | Target domain to generate report for (required) |
+| `-o`, `--output` | Output folder (default: `output`) |
+| `--run` | Specific scan run ID (defaults to latest scan) |
+| `--json` | Print the regenerated report as JSON |
+
 ## Track changes with `diff`
 
 Most recon tools tell you what exists. reconflow also tells you what changed. New subdomains and newly live hosts are often the least-tested parts of a target.
@@ -169,7 +191,7 @@ runs/<run_id>/      snapshot of each scan, used by diff
 - [x] Screenshots of live hosts
 - [x] Scan history and `reconflow diff`
 - [x] `reconflow scope`: check targets against program scope
-- [ ] `reconflow report`: regenerate reports from saved scans
+- [x] `reconflow report`: regenerate reports from saved scans
 - [ ] `--notify`: Discord/Slack webhook alerts for diff results
 - [x] Save results as they come in
 

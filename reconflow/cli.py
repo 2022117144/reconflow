@@ -116,6 +116,37 @@ def build_parser():
         help="One or more target hostnames, URLs, or IPs to check",
     )
 
+    # report subcommand
+    p_report = subparsers.add_parser(
+        "report",
+        help="Regenerate reports from a saved scan",
+        description=(
+            "Regenerate Markdown and JSON reports from a saved scan without re-scanning."
+        ),
+    )
+    p_report.add_argument(
+        "domain",
+        help="Target domain to generate report for",
+    )
+    p_report.add_argument(
+        "-o",
+        "--output",
+        default="output",
+        help="Output folder (default: output)",
+    )
+    p_report.add_argument(
+        "--run",
+        dest="run_id",
+        default=None,
+        help="Specific scan run ID (defaults to latest scan)",
+    )
+    p_report.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_report",
+        help="Output regenerated report as JSON",
+    )
+
     return parser
 
 
@@ -134,6 +165,10 @@ def main(args=None):
         from . import scope
 
         scope.run(parsed_args)
+    elif parsed_args.command == "report":
+        from . import report
+
+        report.run(parsed_args)
     else:
         parser.print_help()
         sys.exit(0)
