@@ -44,16 +44,23 @@ def compare(old, new, triage_hosts=None):
     old_hosts = _by_host(old.get("hosts"))
     new_hosts = _by_host(new.get("hosts"))
 
-    triaged = (
-        set(triage_hosts.keys())
-        if isinstance(triage_hosts, dict)
-        else set(triage_hosts or [])
-    )
+    triage_map = {}
+    if isinstance(triage_hosts, dict):
+        for k, v in triage_hosts.items():
+            if isinstance(v, dict):
+                triage_map[k] = v.get("status", "tested")
+            else:
+                triage_map[k] = str(v)
+    elif isinstance(triage_hosts, (set, list)):
+        for k in triage_hosts:
+            triage_map[k] = "tested"
+
     suppressed_triaged = []
 
     changed = {}
     for name in old_hosts.keys() & new_hosts.keys():
-        if name in triaged:
+        triage_status = triage_map.get(name)
+        if triage_status == "ignore":
             suppressed_triaged.append(new_hosts[name]["url"])
             continue
         o, n = old_hosts[name], new_hosts[name]
@@ -73,7 +80,7 @@ def compare(old, new, triage_hosts=None):
     new_live_names = new_hosts.keys() - old_hosts.keys()
     new_live_urls = []
     for h in new_live_names:
-        if h in triaged:
+        if h in triage_map:
             suppressed_triaged.append(new_hosts[h]["url"])
         else:
             new_live_urls.append(new_hosts[h]["url"])

@@ -283,6 +283,86 @@ class TestDiffCLI(unittest.TestCase):
                 self.assertEqual(cm.exception.code, 0)
                 self.assertIn("No changes detected", mock_out.getvalue())
 
+    def test_diff_backward_compatibility_v022_snapshot(self):
+        """Diffing a v0.2.2 scan snapshot against a v0.3.0 snapshot works smoothly."""
+        from reconflow import history
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            domain = "example.com"
+            out_dir = Path(tmpdir) / domain
+            runs_dir = out_dir / "runs"
+
+            # Create an authentic v0.2.2 run (no status, no incomplete, no scan.jsonl)
+            run1_dir = runs_dir / "2026-10-18_100000"
+            run1_dir.mkdir(parents=True, exist_ok=True)
+            v022_snapshot = {
+                "run_id": "2026-10-18_100000",
+                "timestamp": "2026-10-18T10:00:00.000000",
+                "subdomains": ["admin.example.com", "old.example.com"],
+                "hosts": [
+                    {
+                        "url": "https://admin.example.com",
+                        "status_code": 403,
+                        "title": "Forbidden",
+                        "technologies": ["Apache"],
+                    }
+                ],
+            }
+            (run1_dir / "snapshot.json").write_text(
+                json.dumps(v022_snapshot, indent=2) + "\n", encoding="utf-8"
+            )
+
+            # Create a v0.3.0 run (with streaming scan.jsonl and v0.3.0 snapshot)
+            run2_id, run2_dir = history.init_run(out_dir, domain=domain)
+            history.record_subdomain(run2_dir, "admin.example.com")
+            history.record_subdomain(run2_dir, "beta.example.com")
+            v030_host1 = {
+                "url": "https://admin.example.com",
+                "status_code": 200,
+                "title": "Admin Dashboard",
+                "technologies": ["Apache", "PHP"],
+            }
+            v030_host2 = {
+                "url": "https://beta.example.com",
+                "status_code": 200,
+                "title": "Beta Portal",
+                "technologies": ["Nginx"],
+            }
+            history.record_host(run2_dir, v030_host1)
+            history.record_host(run2_dir, v030_host2)
+            history.finalize_run(
+                run2_dir,
+                ["admin.example.com", "beta.example.com"],
+                [v030_host1, v030_host2],
+                domain=domain,
+            )
+
+            args = MagicMock(
+                domain=domain,
+                output=tmpdir,
+                json_report=True,
+                json=False,
+                notify=False,
+                webhook_url=None,
+            )
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                with self.assertRaises(SystemExit) as cm:
+                    run_diff(args)
+                self.assertEqual(cm.exception.code, 1)
+                data = json.loads(mock_out.getvalue())
+
+            self.assertTrue(data["has_changes"])
+            self.assertEqual(data["new_subdomains"], ["beta.example.com"])
+            self.assertEqual(data["removed_subdomains"], ["old.example.com"])
+            self.assertEqual(data["new_live"], ["https://beta.example.com"])
+            self.assertIn("https://admin.example.com", data["changed"])
+            self.assertEqual(
+                data["changed"]["https://admin.example.com"]["status_code"], [403, 200]
+            )
+            # Verify lead hints generated on status transition
+            hints = data.get("lead_hints", {}).get("https://admin.example.com", [])
+            self.assertTrue(any("403 to 200" in h for h in hints))
+
 
 if __name__ == "__main__":
     unittest.main()

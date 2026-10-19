@@ -232,14 +232,17 @@ def probe_hosts(
                                 print(f"[*] [scope] Skipped out-of-scope probed host: {url}")
                                 continue
 
-                            if final_url and not scope.is_in_scope(final_url, scope_data):
-                                print(
-                                    f"[*] [scope] Redirect target out of scope: "
-                                    f"{final_url} (from {url})"
-                                )
-                                data["redirect_out_of_scope"] = final_url
-                                if data.get("url") == final_url:
-                                    data["url"] = url
+                            if final_url:
+                                if not scope.is_in_scope(final_url, scope_data):
+                                    print(
+                                        f"[*] [scope] Redirect target out of scope: "
+                                        f"{final_url} (from {url})"
+                                    )
+                                    data["redirect_out_of_scope"] = final_url
+                                    if data.get("url") == final_url:
+                                        data["url"] = url
+                                else:
+                                    data["redirect_in_scope"] = final_url
 
                         code = data.get("status_code", data.get("status-code", 0))
                         title = data.get("title", "")
@@ -252,6 +255,8 @@ def probe_hosts(
                         }
                         if "redirect_out_of_scope" in data:
                             entry["redirect_out_of_scope"] = data["redirect_out_of_scope"]
+                        if "redirect_in_scope" in data:
+                            entry["redirect_in_scope"] = data["redirect_in_scope"]
                         hosts_data.append(entry)
                         display = f"{url} [{code}]"
                         if title:
@@ -300,6 +305,7 @@ def probe_hosts(
                                 break
 
                         has_oos_redirect = False
+                        has_in_scope_redirect = False
                         if redirect_url and scope_data:
                             from . import scope
 
@@ -309,6 +315,8 @@ def probe_hosts(
                                     f"{redirect_url} (from {url})"
                                 )
                                 has_oos_redirect = True
+                            else:
+                                has_in_scope_redirect = True
 
                         display = stripped
                         if has_oos_redirect and "redirect out of scope:" not in display:
@@ -317,6 +325,8 @@ def probe_hosts(
                         entry = {"url": url}
                         if has_oos_redirect:
                             entry["redirect_out_of_scope"] = redirect_url
+                        if has_in_scope_redirect:
+                            entry["redirect_in_scope"] = redirect_url
                         hosts_data.append(entry)
 
                         lines.append(display)
@@ -348,19 +358,32 @@ def capture_screenshots(live_hosts, screenshots_dir, scope_data=None, hosts_data
     urls = [line.split()[0] for line in live_hosts if line.strip()]
 
     out_of_scope_redirects = {}
+    verified_in_scope_redirects = set()
+    unverified_3xx = set()
+
     if hosts_data:
         for h in hosts_data:
-            if isinstance(h, dict) and h.get("redirect_out_of_scope"):
-                out_of_scope_redirects[h["url"]] = h["redirect_out_of_scope"]
+            if isinstance(h, dict):
+                u = h.get("url")
+                if h.get("redirect_out_of_scope"):
+                    out_of_scope_redirects[u] = h["redirect_out_of_scope"]
+                if h.get("redirect_in_scope"):
+                    verified_in_scope_redirects.add(u)
+                code = h.get("status_code", 0)
+                if code in (301, 302, 303, 307, 308) and u not in verified_in_scope_redirects:
+                    unverified_3xx.add(u)
 
     for line in live_hosts:
+        first_token = line.split()[0]
         if "redirect out of scope:" in line:
             import re
 
             m = re.search(r"redirect out of scope:\s*([^\]\s]+)", line)
             if m:
-                u = line.split()[0]
-                out_of_scope_redirects[u] = m.group(1)
+                out_of_scope_redirects[first_token] = m.group(1)
+        elif scope_data and any(f"[{code}]" in line for code in (301, 302, 303, 307, 308)):
+            if first_token not in verified_in_scope_redirects:
+                unverified_3xx.add(first_token)
 
     filtered_urls = []
     for u in urls:
@@ -373,6 +396,12 @@ def capture_screenshots(live_hosts, screenshots_dir, scope_data=None, hosts_data
             print(
                 f"[*] [scope] Skipping screenshot for {u}: "
                 f"redirects to out-of-scope target ({out_of_scope_redirects[u]})"
+            )
+            continue
+        if scope_data and u in unverified_3xx:
+            print(
+                f"[*] [scope] Skipping screenshot for {u}: "
+                "3xx redirect location could not be verified in scope"
             )
             continue
         filtered_urls.append(u)

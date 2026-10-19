@@ -91,6 +91,29 @@ class TestWebhookNotification(unittest.TestCase):
         # CRITICAL: Webhook secret token must NEVER be exposed
         self.assertNotIn("super_secret_token_12345", err_output)
 
+    def test_webhook_http_error_does_not_leak_url(self):
+        """HTTP error responses fail gracefully without leaking webhook URL into stderr."""
+        import urllib.error
+
+        secret_url = "https://hooks.slack.com/services/T00/B00/secret_token_slack_999"
+
+        def http_error_open(req, timeout=None):
+            raise urllib.error.HTTPError(
+                url=secret_url,
+                code=500,
+                msg="Internal Server Error",
+                hdrs={},
+                fp=None,
+            )
+
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_err:
+            res = notify.send_webhook(secret_url, "Message", opener=http_error_open)
+            err_output = mock_err.getvalue()
+
+        self.assertFalse(res)
+        self.assertIn("Webhook delivery failed with HTTP 500", err_output)
+        self.assertNotIn("secret_token_slack_999", err_output)
+
     def test_resolve_webhook_url_precedence(self):
         """resolve_webhook_url follows explicit > RECONFLOW > DISCORD > SLACK precedence."""
         self.assertEqual(notify.resolve_webhook_url("https://custom.hook"), "https://custom.hook")

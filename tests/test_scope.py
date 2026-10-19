@@ -345,6 +345,42 @@ class TestScopeCLIAndScanIntegration(unittest.TestCase):
             cmd = mock_run_cmd.call_args[0][0]
             self.assertEqual(cmd[0], "gowitness")
 
+    def test_capture_screenshots_skips_unverified_3xx_redirect(self):
+        """capture_screenshots must safely skip 3xx hosts if redirect target is unverified."""
+        from reconflow.scan import capture_screenshots
+
+        with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as sf:
+            sf.write("*.example.com\n")
+            sf.flush()
+            scope_data = load_scope(sf.name)
+
+        live_hosts = [
+            "https://redirector.example.com [302]",
+        ]
+        hosts_data = [
+            {
+                "url": "https://redirector.example.com",
+                "status_code": 302,
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            screenshots_dir = Path(tmpdir) / "screenshots"
+
+            with patch("reconflow.scan.run_cmd") as mock_run_cmd:
+                with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                    capture_screenshots(
+                        live_hosts,
+                        screenshots_dir,
+                        scope_data=scope_data,
+                        hosts_data=hosts_data,
+                    )
+                    stdout_str = mock_out.getvalue()
+
+            self.assertIn("Skipping screenshot for https://redirector.example.com", stdout_str)
+            self.assertIn("3xx redirect location could not be verified in scope", stdout_str)
+            self.assertFalse(mock_run_cmd.called)
+
     def test_scope_audit_dns_ip_resolution(self):
         """DNS resolution filtering must drop subdomains resolving to out-of-scope IPs."""
         from reconflow.scan import filter_wildcard

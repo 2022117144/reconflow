@@ -131,6 +131,10 @@ reconflow mark --list -d example.com
 | `--notes` | Optional notes on the triage decision |
 | `--list` | List all triaged hosts for domain |
 
+> **Triage Behavior**:
+> - `--ignore`: Permanently silences the host from appearing in `new_live` and `changed` sections in subsequent diffs.
+> - `--tested`: Hides the host from `new_live` once reviewed, but if the host later undergoes a change (e.g. status code changes from 403 to 200, title changes, or new technology is detected), it automatically resurfaces under `changed` so you never miss critical updates.
+
 ### `report`
 
 Regenerate Markdown (`report.md`) and JSON (`report.json`) reports from an existing scan snapshot without re-running any network discovery or probing:
@@ -194,12 +198,14 @@ Example output (illustrative):
 Send alerts to Discord or Slack only when new hosts or changes are detected:
 
 ```bash
-# Set webhook in environment (never committed or logged)
+# Set webhook in environment (recommended: avoids exposing secrets in shell history or ps)
 export RECONFLOW_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 
 # Every 6 hours: rescan, diff, and notify on changes
 0 */6 * * * reconflow scan example.com && reconflow diff example.com --notify >> ~/recon-changes.log
 ```
+
+> **Security Note**: Using the `RECONFLOW_WEBHOOK_URL` (or `DISCORD_WEBHOOK_URL` / `SLACK_WEBHOOK_URL`) environment variable is strongly recommended over `--webhook-url` to prevent sensitive tokens from appearing in shell history (`.bash_history`) or process listings (`ps aux`).
 
 ## Output
 

@@ -102,6 +102,26 @@ class TestTriageState(unittest.TestCase):
         self.assertEqual(result["changed"], {})
         self.assertIn("https://admin.example.com", result.get("suppressed_triaged", []))
 
+    def test_diff_resurfaces_tested_host_on_change(self):
+        """A host marked --tested resurfaces in changed if its status/tech changes."""
+        old = {
+            "run_id": "run1",
+            "hosts": [{"url": "https://admin.example.com", "status_code": 403}],
+            "subdomains": ["admin.example.com"],
+        }
+        new = {
+            "run_id": "run2",
+            "hosts": [{"url": "https://admin.example.com", "status_code": 200}],
+            "subdomains": ["admin.example.com"],
+        }
+
+        triage_hosts = {"admin.example.com": {"status": "tested"}}
+        result = diff.compare(old, new, triage_hosts=triage_hosts)
+
+        # Must resurface in changed!
+        self.assertIn("https://admin.example.com", result["changed"])
+        self.assertEqual(result["changed"]["https://admin.example.com"]["status_code"], (403, 200))
+
     def test_cli_mark_dispatch(self):
         """CLI 'reconflow mark <host> --tested' updates triage state."""
         with tempfile.TemporaryDirectory() as tmpdir:
