@@ -101,8 +101,35 @@ reconflow scope scope.txt api.example.com admin.example.com 192.168.1.10
 | `domain` | Target domain to compare runs for (required) |
 | `-o`, `--output` | Output folder (default: `output`) |
 | `--json` | Print the comparison as JSON |
+| `--notify` | Send webhook alert to Discord or Slack if changes are detected |
+| `--webhook-url` | Webhook URL (or set `RECONFLOW_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` / `SLACK_WEBHOOK_URL`) |
 
 `diff` needs at least two saved scans of the same domain. Run `scan` twice first.
+
+### `mark`
+
+Set triage state for a host on a per-domain basis so reviewed assets stop cluttering differential scans:
+
+```bash
+# Mark host as reviewed and tested
+reconflow mark admin.example.com --tested
+
+# Mark host to be ignored in subsequent diffs
+reconflow mark dev-api.example.com --ignore --notes "Mock API for testing"
+
+# List all triaged hosts for a domain
+reconflow mark --list -d example.com
+```
+
+| Option | Description |
+| --- | --- |
+| `host` | Hostname or URL to mark |
+| `-d`, `--domain` | Target domain (inferred if omitted) |
+| `-o`, `--output` | Output folder (default: `output`) |
+| `--tested` | Mark host as tested |
+| `--ignore` | Mark host as ignored |
+| `--notes` | Optional notes on the triage decision |
+| `--list` | List all triaged hosts for domain |
 
 ### `report`
 
@@ -128,7 +155,7 @@ reconflow report example.com --json
 
 ## Track changes with `diff`
 
-Most recon tools tell you what exists. reconflow also tells you what changed. New subdomains and newly live hosts are often the least-tested parts of a target.
+Most recon tools tell you what exists. reconflow also tells you what changed. New subdomains, newly live hosts, and status transitions are annotated with actionable **lead hints** ("worth checking"):
 
 Example output (illustrative):
 
@@ -140,17 +167,20 @@ Example output (illustrative):
     + staging-api.example.com
 [+] NEWLY LIVE HOSTS (1):
     + https://beta.example.com [200] [Beta Portal] [Nginx, React]
+        * Worth checking: Prerelease beta environment; look for unhardened endpoints or debug flags.
 [*] CHANGED HOSTS (1):
     ~ https://admin.example.com
         status: 403 -> 200
         title: 'Forbidden' -> 'Admin Login'
         tech: ['Apache'] -> ['Apache', 'PHP']
+        * Worth checking: Status changed from 403 to 200; previously protected resource is now publicly accessible.
+        * Worth checking: Administrative interface; test for panel access, auth bypass, or default credentials.
 [-] Removed subdomains (1) [informational]:
     - old.example.com
 ============================================================
 ```
 
-Removed subdomains are informational only, because subfinder's sources can return slightly different results between runs.
+> **Incomplete Scan Safeguards**: If a previous or current scan was interrupted (Ctrl+C), missing hosts are never reported as "gone" or removed, and a warning is displayed instead.
 
 ### Exit codes
 
@@ -159,11 +189,16 @@ Removed subdomains are informational only, because subfinder's sources can retur
 | `0` | No changes found (or not enough history to compare) |
 | `1` | Changes were detected |
 
-### Run it on a schedule
+### Webhook Alerts & Scheduled Automation
 
-```
-# Every 6 hours: rescan and log changes
-0 */6 * * * reconflow scan example.com && reconflow diff example.com >> ~/recon-changes.log
+Send alerts to Discord or Slack only when new hosts or changes are detected:
+
+```bash
+# Set webhook in environment (never committed or logged)
+export RECONFLOW_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+
+# Every 6 hours: rescan, diff, and notify on changes
+0 */6 * * * reconflow scan example.com && reconflow diff example.com --notify >> ~/recon-changes.log
 ```
 
 ## Output
@@ -175,6 +210,7 @@ subdomains.txt      all discovered subdomains
 live.txt            live hosts with status code, title, tech
 report.md           summary report
 report.json         structured report (with --json)
+triage.json         triage records (with reconflow mark)
 screenshots/        screenshots of live hosts (with --screenshots)
 runs/<run_id>/      snapshot of each scan, used by diff
 ```
@@ -194,7 +230,9 @@ runs/<run_id>/      snapshot of each scan, used by diff
 - [x] Scan history and `reconflow diff`
 - [x] `reconflow scope`: check targets against program scope
 - [x] `reconflow report`: regenerate reports from saved scans
-- [ ] `--notify`: Discord/Slack webhook alerts for diff results
+- [x] Lead hints in `reconflow diff`
+- [x] `--notify`: Discord/Slack webhook alerts for diff results
+- [x] Triage state: `reconflow mark <host> --tested|--ignore`
 - [x] Save results as they come in
 
 ## Contributing
