@@ -157,6 +157,53 @@ def build_parser():
         help="Output regenerated report as JSON",
     )
 
+    # mark subcommand
+    p_mark = subparsers.add_parser(
+        "mark",
+        help="Mark a host triage state (--tested or --ignore)",
+        description=(
+            "Set triage state for a host so reviewed assets stop appearing in diffs."
+        ),
+    )
+    p_mark.add_argument(
+        "host",
+        nargs="?",
+        default=None,
+        help="Target host or URL to mark",
+    )
+    p_mark.add_argument(
+        "-d",
+        "--domain",
+        default=None,
+        help="Target domain (inferred if omitted)",
+    )
+    p_mark.add_argument(
+        "-o",
+        "--output",
+        default="output",
+        help="Output folder (default: output)",
+    )
+    p_mark.add_argument(
+        "--tested",
+        action="store_true",
+        help="Mark host as tested",
+    )
+    p_mark.add_argument(
+        "--ignore",
+        action="store_true",
+        help="Mark host as ignored",
+    )
+    p_mark.add_argument(
+        "--notes",
+        default="",
+        help="Optional triage notes",
+    )
+    p_mark.add_argument(
+        "--list",
+        action="store_true",
+        help="List all triaged hosts for domain",
+    )
+
     return parser
 
 
@@ -179,6 +226,10 @@ def main(args=None):
         from . import report
 
         report.run(parsed_args)
+    elif parsed_args.command == "mark":
+        from . import triage
+
+        triage.run(parsed_args)
     else:
         parser.print_help()
         sys.exit(0)

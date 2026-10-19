@@ -34,17 +34,28 @@ def _meaningful_tech(tech):
     return {t for t in (tech or []) if t not in IGNORED_TECH}
 
 
-def compare(old, new):
+def compare(old, new, triage_hosts=None):
     """Compare two scan snapshots and return differences.
 
     Hosts are matched by hostname, so a scheme flip (http <-> https) is not
     reported as one host disappearing and another appearing.
+    Tested or ignored hosts from triage_hosts are suppressed.
     """
     old_hosts = _by_host(old.get("hosts"))
     new_hosts = _by_host(new.get("hosts"))
 
+    triaged = (
+        set(triage_hosts.keys())
+        if isinstance(triage_hosts, dict)
+        else set(triage_hosts or [])
+    )
+    suppressed_triaged = []
+
     changed = {}
     for name in old_hosts.keys() & new_hosts.keys():
+        if name in triaged:
+            suppressed_triaged.append(new_hosts[name]["url"])
+            continue
         o, n = old_hosts[name], new_hosts[name]
         diffs = {}
         if o.get("status_code") != n.get("status_code"):
@@ -59,7 +70,15 @@ def compare(old, new):
     old_subs = set(old.get("subdomains") or [])
     new_subs = set(new.get("subdomains") or [])
 
-    new_live_urls = sorted(new_hosts[h]["url"] for h in new_hosts.keys() - old_hosts.keys())
+    new_live_names = new_hosts.keys() - old_hosts.keys()
+    new_live_urls = []
+    for h in new_live_names:
+        if h in triaged:
+            suppressed_triaged.append(new_hosts[h]["url"])
+        else:
+            new_live_urls.append(new_hosts[h]["url"])
+    new_live_urls.sort()
+
     gone_live_urls = sorted(old_hosts[h]["url"] for h in old_hosts.keys() - new_hosts.keys())
     removed_subs = sorted(old_subs - new_subs)
 
@@ -110,6 +129,8 @@ def compare(old, new):
         "changed": changed,
         "lead_hints": lead_hints,
     }
+    if suppressed_triaged:
+        result["suppressed_triaged"] = sorted(set(suppressed_triaged))
     if incomplete_warning:
         result["incomplete_warning"] = incomplete_warning
     return result
@@ -125,6 +146,12 @@ def format_diff(diff_result, old_id, new_id, new_data=None):
     incomplete_warning = diff_result.get("incomplete_warning")
     if incomplete_warning:
         lines.append(f"[!] {incomplete_warning}\n")
+
+    suppressed_triaged = diff_result.get("suppressed_triaged", [])
+    if suppressed_triaged:
+        lines.append(
+            f"[*] Filtered out {len(suppressed_triaged)} triaged host(s) (tested/ignored)."
+        )
 
     new_subs = diff_result.get("new_subdomains", [])
     new_live = diff_result.get("new_live", [])
@@ -235,7 +262,13 @@ def run(args):
     old_data = history.load_snapshot(old_run)
     new_data = history.load_snapshot(new_run)
 
-    diff_result = compare(old_data, new_data)
+    # Load triage state if exists for this domain
+    from . import triage
+
+    triage_data = triage.load_triage(out_dir)
+    triaged_hosts = triage_data.get("hosts", {})
+
+    diff_result = compare(old_data, new_data, triage_hosts=triaged_hosts)
     has_changes = any([
         diff_result["new_subdomains"],
         diff_result["new_live"],
