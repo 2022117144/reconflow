@@ -58,13 +58,61 @@ def compare(old, new):
 
     old_subs = set(old.get("subdomains") or [])
     new_subs = set(new.get("subdomains") or [])
-    return {
+
+    new_live_urls = sorted(new_hosts[h]["url"] for h in new_hosts.keys() - old_hosts.keys())
+    gone_live_urls = sorted(old_hosts[h]["url"] for h in old_hosts.keys() - new_hosts.keys())
+    removed_subs = sorted(old_subs - new_subs)
+
+    # Incomplete scan handling: never report missing hosts as gone if scan was incomplete
+    incomplete_warning = None
+    old_incomplete = bool(old.get("incomplete") or old.get("status") == "incomplete")
+    new_incomplete = bool(new.get("incomplete") or new.get("status") == "incomplete")
+    if old_incomplete or new_incomplete:
+        gone_live_urls = []
+        removed_subs = []
+        incomplete_warning = (
+            "Warning: Comparison involves an incomplete scan; "
+            "missing hosts are not reported as gone."
+        )
+
+    # Generate lead hints
+    from . import leads
+
+    lead_hints = {}
+    for url in new_live_urls:
+        h_record = next(
+            (h for h in (new.get("hosts") or []) if isinstance(h, dict) and h.get("url") == url),
+            None,
+        )
+        hints = leads.extract_hints_for_host(
+            url,
+            status_code=h_record.get("status_code") if h_record else None,
+            title=h_record.get("title") if h_record else None,
+            tech=h_record.get("technologies") if h_record else None,
+        )
+        if hints:
+            lead_hints[url] = hints
+
+    for url, diffs in changed.items():
+        h_record = next(
+            (h for h in (new.get("hosts") or []) if isinstance(h, dict) and h.get("url") == url),
+            None,
+        )
+        hints = leads.extract_hints_for_change(url, diffs, new_host_meta=h_record)
+        if hints:
+            lead_hints[url] = hints
+
+    result = {
         "new_subdomains": sorted(new_subs - old_subs),
-        "removed_subdomains": sorted(old_subs - new_subs),
-        "new_live": sorted(new_hosts[h]["url"] for h in new_hosts.keys() - old_hosts.keys()),
-        "gone_live": sorted(old_hosts[h]["url"] for h in old_hosts.keys() - new_hosts.keys()),
+        "removed_subdomains": removed_subs,
+        "new_live": new_live_urls,
+        "gone_live": gone_live_urls,
         "changed": changed,
+        "lead_hints": lead_hints,
     }
+    if incomplete_warning:
+        result["incomplete_warning"] = incomplete_warning
+    return result
 
 
 def format_diff(diff_result, old_id, new_id, new_data=None):
@@ -74,11 +122,16 @@ def format_diff(diff_result, old_id, new_id, new_data=None):
         "=" * 60,
     ]
 
+    incomplete_warning = diff_result.get("incomplete_warning")
+    if incomplete_warning:
+        lines.append(f"[!] {incomplete_warning}\n")
+
     new_subs = diff_result.get("new_subdomains", [])
     new_live = diff_result.get("new_live", [])
     changed = diff_result.get("changed", {})
     removed_subs = diff_result.get("removed_subdomains", [])
     gone_live = diff_result.get("gone_live", [])
+    lead_hints = diff_result.get("lead_hints", {})
 
     has_changes = any([new_subs, new_live, changed, removed_subs, gone_live])
     if not has_changes:
@@ -117,6 +170,9 @@ def format_diff(diff_result, old_id, new_id, new_data=None):
                 lines.append(f"    + {h}{detail}")
             else:
                 lines.append(f"    + {h}")
+            if h in lead_hints:
+                for hint in lead_hints[h]:
+                    lines.append(f"        * {hint}")
 
     if changed:
         lines.append(f"\n[*] CHANGED HOSTS ({len(changed)}):")
@@ -131,6 +187,9 @@ def format_diff(diff_result, old_id, new_id, new_data=None):
             if "technologies" in diffs:
                 o, n = diffs["technologies"]
                 lines.append(f"        tech: {o} -> {n}")
+            if url in lead_hints:
+                for hint in lead_hints[url]:
+                    lines.append(f"        * {hint}")
 
     if removed_subs:
         lines.append(f"\n[-] Removed subdomains ({len(removed_subs)}) [informational]:")
