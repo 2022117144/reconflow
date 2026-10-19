@@ -189,6 +189,7 @@ def probe_hosts(
         "-status-code",
         "-title",
         "-tech-detect",
+        "-location",
     ]
     if json_report:
         cmd.append("-json")
@@ -258,6 +259,8 @@ def probe_hosts(
                         if tech:
                             tech_str = ", ".join(tech) if isinstance(tech, list) else tech
                             display += f" [{tech_str}]"
+                        if "redirect_out_of_scope" in data:
+                            display += f" [redirect out of scope: {data['redirect_out_of_scope']}]"
                         lines.append(display)
                         live_fh.write(display + "\n")
                         live_fh.flush()
@@ -272,20 +275,58 @@ def probe_hosts(
                         error_lines.append(stripped)
                 else:
                     if stripped.startswith("http://") or stripped.startswith("https://"):
+                        tokens = stripped.split()
+                        url = tokens[0]
                         if scope_data:
                             from . import scope
 
-                            if not scope.is_in_scope(stripped, scope_data):
-                                print(f"[*] [scope] Skipped out-of-scope probed host: {stripped}")
+                            if not scope.is_in_scope(url, scope_data):
+                                print(f"[*] [scope] Skipped out-of-scope probed host: {url}")
                                 continue
-                        lines.append(stripped)
-                        live_fh.write(stripped + "\n")
+
+                        import re
+
+                        redirect_url = None
+                        brackets = re.findall(r"\[(.*?)\]", stripped)
+                        for b in brackets:
+                            b_clean = b.strip()
+                            for prefix in ("location:", "->", "to:"):
+                                if b_clean.lower().startswith(prefix):
+                                    b_clean = b_clean[len(prefix):].strip()
+                            if (
+                                b_clean.startswith("http://") or b_clean.startswith("https://")
+                            ) and b_clean != url:
+                                redirect_url = b_clean
+                                break
+
+                        has_oos_redirect = False
+                        if redirect_url and scope_data:
+                            from . import scope
+
+                            if not scope.is_in_scope(redirect_url, scope_data):
+                                print(
+                                    f"[*] [scope] Redirect target out of scope: "
+                                    f"{redirect_url} (from {url})"
+                                )
+                                has_oos_redirect = True
+
+                        display = stripped
+                        if has_oos_redirect and "redirect out of scope:" not in display:
+                            display += f" [redirect out of scope: {redirect_url}]"
+
+                        entry = {"url": url}
+                        if has_oos_redirect:
+                            entry["redirect_out_of_scope"] = redirect_url
+                        hosts_data.append(entry)
+
+                        lines.append(display)
+                        live_fh.write(display + "\n")
                         live_fh.flush()
                         if run_dir:
                             from . import history
 
-                            history.record_host(run_dir, {"url": stripped})
-                        print(f"[*] [{len(lines)} alive] {stripped}")
+                            history.record_host(run_dir, entry)
+                        print(f"[*] [{len(lines)} alive] {display}")
                     else:
                         error_lines.append(stripped)
             proc.wait()
@@ -298,17 +339,45 @@ def probe_hosts(
             print(f"[!] httpx probing failed (exit code {proc.returncode})")
 
     print(f"[+] Probing complete: {len(lines)} hosts are alive")
-    return lines, (hosts_data if json_report else None)
+    return lines, hosts_data
 
 
-def capture_screenshots(live_hosts, screenshots_dir, scope_data=None):
+def capture_screenshots(live_hosts, screenshots_dir, scope_data=None, hosts_data=None):
     """Capture screenshots of live hosts using gowitness."""
     screenshots_dir.mkdir(parents=True, exist_ok=True)
     urls = [line.split()[0] for line in live_hosts if line.strip()]
-    if scope_data:
-        from . import scope
 
-        urls = [u for u in urls if scope.is_in_scope(u, scope_data)]
+    out_of_scope_redirects = {}
+    if hosts_data:
+        for h in hosts_data:
+            if isinstance(h, dict) and h.get("redirect_out_of_scope"):
+                out_of_scope_redirects[h["url"]] = h["redirect_out_of_scope"]
+
+    for line in live_hosts:
+        if "redirect out of scope:" in line:
+            import re
+
+            m = re.search(r"redirect out of scope:\s*([^\]\s]+)", line)
+            if m:
+                u = line.split()[0]
+                out_of_scope_redirects[u] = m.group(1)
+
+    filtered_urls = []
+    for u in urls:
+        if scope_data:
+            from . import scope
+
+            if not scope.is_in_scope(u, scope_data):
+                continue
+        if u in out_of_scope_redirects:
+            print(
+                f"[*] [scope] Skipping screenshot for {u}: "
+                f"redirects to out-of-scope target ({out_of_scope_redirects[u]})"
+            )
+            continue
+        filtered_urls.append(u)
+    urls = filtered_urls
+
     if not urls:
         return []
     print("[*] Capturing screenshots of live hosts with gowitness...")
@@ -483,7 +552,10 @@ def run(args):
                 )
                 if screenshots_enabled and live:
                     screenshots = capture_screenshots(
-                        live, out_dir / "screenshots", scope_data=scope_data
+                        live,
+                        out_dir / "screenshots",
+                        scope_data=scope_data,
+                        hosts_data=hosts_data,
                     )
 
         write_report(

@@ -92,6 +92,8 @@ reconflow scope scope.txt api.example.com admin.example.com 192.168.1.10
 - **Normalization**: Hostnames are normalized first (lowercased; schemes, credentials, ports, paths, and trailing dots are stripped).
 - **Fail closed**: If `--scope` is given and the file is missing, unreadable, empty, or contains no valid in-scope entries, reconflow aborts immediately. Out-of-scope hosts and redirect targets are never probed.
 
+> **Browser Redirects & Scope**: `gowitness` captures screenshots in a real headless browser, which automatically follows HTTP redirects. `reconflow` protects your scope boundaries by capturing HTTP redirect targets (`Location` headers) via `httpx` in all modes and automatically skipping screenshots for any host that redirects to an out-of-scope destination. Note that client-side JavaScript redirects (e.g. `window.location`) or HTML `<meta http-equiv="refresh">` redirects execute inside the browser engine and cannot be detected beforehand.
+
 ### `diff`
 
 | Option | Description |

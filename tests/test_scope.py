@@ -216,8 +216,8 @@ class TestScopeCLIAndScanIntegration(unittest.TestCase):
             content = subs_txt.read_text(encoding="utf-8").strip().splitlines()
             self.assertEqual(content, ["api.example.com"])
 
-    def test_redirect_out_of_scope_handling(self):
-        """Probing detects redirects to out-of-scope targets and marks them out of scope."""
+    def test_redirect_out_of_scope_handling_json_path(self):
+        """Probing in JSON mode detects redirects to out-of-scope targets and marks them."""
         from reconflow.scan import probe_hosts
 
         mock_proc = MagicMock()
@@ -259,6 +259,119 @@ class TestScopeCLIAndScanIntegration(unittest.TestCase):
             )
             # Original URL is preserved, not replaced by out-of-scope redirect target
             self.assertEqual(hosts_data[0]["url"], "https://sso.example.com")
+
+    def test_redirect_out_of_scope_handling_default_path(self):
+        """Probing in default (plain-text) mode captures out-of-scope redirects from -location."""
+        from reconflow.scan import probe_hosts
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([
+            "https://sso.example.com [302] [Redirect] [https://login.microsoftonline.com]\n",
+        ])
+        mock_proc.wait.return_value = None
+        mock_proc.returncode = 0
+        mock_proc.__enter__.return_value = mock_proc
+        mock_proc.__exit__.return_value = None
+
+        with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as sf:
+            sf.write("*.example.com\n")
+            sf.flush()
+            scope_data = load_scope(sf.name)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subs_file = Path(tmpdir) / "subs.txt"
+            subs_file.write_text("sso.example.com\n", encoding="utf-8")
+            out_file = Path(tmpdir) / "live.txt"
+
+            with patch("subprocess.Popen", return_value=mock_proc):
+                with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                    lines, hosts_data = probe_hosts(
+                        subs_file,
+                        out_file,
+                        json_report=False,
+                        scope_data=scope_data,
+                    )
+                    stdout_str = mock_out.getvalue()
+
+            self.assertIn("Redirect target out of scope", stdout_str)
+            self.assertIn("https://login.microsoftonline.com", stdout_str)
+            self.assertEqual(len(hosts_data), 1)
+            self.assertEqual(
+                hosts_data[0].get("redirect_out_of_scope"),
+                "https://login.microsoftonline.com",
+            )
+            self.assertIn("redirect out of scope:", lines[0])
+
+    def test_capture_screenshots_skips_out_of_scope_redirects(self):
+        """capture_screenshots must skip any host that redirected out of scope."""
+        from reconflow.scan import capture_screenshots
+
+        with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as sf:
+            sf.write("*.example.com\n")
+            sf.flush()
+            scope_data = load_scope(sf.name)
+
+        live_hosts = [
+            "https://api.example.com [200]",
+            "https://sso.example.com [302] [redirect out of scope: https://evil.com]",
+        ]
+        hosts_data = [
+            {"url": "https://api.example.com", "status_code": 200},
+            {
+                "url": "https://sso.example.com",
+                "status_code": 302,
+                "redirect_out_of_scope": "https://evil.com",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            screenshots_dir = Path(tmpdir) / "screenshots"
+
+            with patch("reconflow.scan.run_cmd") as mock_run_cmd:
+                with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                    capture_screenshots(
+                        live_hosts,
+                        screenshots_dir,
+                        scope_data=scope_data,
+                        hosts_data=hosts_data,
+                    )
+                    stdout_str = mock_out.getvalue()
+
+            self.assertIn("Skipping screenshot for https://sso.example.com", stdout_str)
+            self.assertIn("redirects to out-of-scope target (https://evil.com)", stdout_str)
+
+            # Check that gowitness was called and targets file only had api.example.com
+            self.assertTrue(mock_run_cmd.called)
+            cmd = mock_run_cmd.call_args[0][0]
+            self.assertEqual(cmd[0], "gowitness")
+
+    def test_scope_audit_dns_ip_resolution(self):
+        """DNS resolution filtering must drop subdomains resolving to out-of-scope IPs."""
+        from reconflow.scan import filter_wildcard
+
+        with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as sf:
+            sf.write("*.example.com\n!192.168.0.0/16\n")
+            sf.flush()
+            scope_data = load_scope(sf.name)
+
+        subs = ["good.example.com", "bad-ip.example.com"]
+
+        def fake_resolve(host):
+            if host == "bad-ip.example.com":
+                return {"192.168.1.50"}
+            return {"93.184.216.34"}
+
+        with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+            kept = filter_wildcard(
+                subs,
+                wildcard_ips=set(),
+                resolve_fn=fake_resolve,
+                scope_data=scope_data,
+            )
+            stdout_str = mock_out.getvalue()
+
+        self.assertEqual(kept, ["good.example.com"])
+        self.assertIn("Skipped host resolving to out-of-scope IP", stdout_str)
 
     def test_utf8_bom_scope_file(self):
         """Scope files with UTF-8 BOM are decoded without corrupting the first rule."""
