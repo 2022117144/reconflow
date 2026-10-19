@@ -1,12 +1,12 @@
-"""reconflow.history - Snapshot tracking and scan history management."""
+"""reconflow.history - Snapshot tracking and incremental scan history management."""
 
 import json
 from datetime import datetime
 from pathlib import Path
 
 
-def save_snapshot(out_dir: Path, subs, hosts):
-    """Save scan results as a timestamped snapshot under out_dir/runs/<run_id>/."""
+def init_run(out_dir: Path, domain: str = ""):
+    """Initialize a new scan run directory and mark it as incomplete initially."""
     base_id = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     run_id = base_id
     runs_dir = out_dir / "runs"
@@ -19,28 +19,163 @@ def save_snapshot(out_dir: Path, subs, hosts):
 
     run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata = {
+        "run_id": run_id,
+        "domain": domain,
+        "timestamp": datetime.now().isoformat(),
+        "status": "incomplete",
+        "incomplete": True,
+        "subdomains": [],
+        "hosts": [],
+    }
+    (run_dir / "snapshot.json").write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
+
+    (run_dir / "scan.jsonl").touch(exist_ok=True)
+    return run_id, run_dir
+
+
+def record_subdomain(run_dir: Path, subdomain: str):
+    """Incrementally record a discovered subdomain into scan.jsonl and flush immediately."""
+    jsonl_file = run_dir / "scan.jsonl"
+    record = {"type": "subdomain", "subdomain": subdomain}
+    with open(jsonl_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+        f.flush()
+
+
+def record_host(run_dir: Path, host_data: dict):
+    """Incrementally record a probed live host into scan.jsonl and flush immediately."""
+    jsonl_file = run_dir / "scan.jsonl"
+    record = {"type": "host", "host": host_data}
+    with open(jsonl_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+        f.flush()
+
+
+def finalize_run(run_dir: Path, subs, hosts, domain: str = ""):
+    """Mark scan run as complete and write final snapshot.json."""
+    snapshot_file = run_dir / "snapshot.json"
+    run_id = run_dir.name
+    timestamp = datetime.now().isoformat()
+    if snapshot_file.exists():
+        try:
+            existing = json.loads(snapshot_file.read_text(encoding="utf-8"))
+            run_id = existing.get("run_id", run_id)
+            timestamp = existing.get("timestamp", timestamp)
+            if not domain:
+                domain = existing.get("domain", "")
+        except Exception:
+            pass
+
     data = {
         "run_id": run_id,
-        "timestamp": datetime.now().isoformat(),
+        "domain": domain,
+        "timestamp": timestamp,
+        "status": "complete",
+        "incomplete": False,
         "subdomains": sorted(subs),
         "hosts": hosts or [],
     }
-    (run_dir / "snapshot.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    snapshot_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return run_id
+
+
+def save_snapshot(out_dir: Path, subs, hosts, domain: str = ""):
+    """Save scan results as a timestamped snapshot under out_dir/runs/<run_id>/.
+
+    Backward-compatible wrapper around init_run and finalize_run.
+    """
+    run_id, run_dir = init_run(out_dir, domain=domain)
+    for s in subs:
+        record_subdomain(run_dir, s)
+    for h in (hosts or []):
+        record_host(run_dir, h)
+    finalize_run(run_dir, subs, hosts, domain=domain)
     return run_id
 
 
 def list_runs(out_dir: Path):
-    """Return a sorted list of run directories containing snapshot.json."""
+    """Return a sorted list of run directories containing snapshot.json or scan.jsonl."""
     runs_dir = out_dir / "runs"
     if not runs_dir.exists() or not runs_dir.is_dir():
         return []
-    valid_runs = [p for p in runs_dir.iterdir() if p.is_dir() and (p / "snapshot.json").exists()]
+    valid_runs = [
+        p for p in runs_dir.iterdir()
+        if p.is_dir() and ((p / "snapshot.json").exists() or (p / "scan.jsonl").exists())
+    ]
     return sorted(valid_runs, key=lambda p: p.name)
 
 
 def load_snapshot(run_dir: Path):
-    """Load and parse snapshot.json from the specified run directory."""
+    """Load and parse scan snapshot from the specified run directory.
+
+    Handles incomplete scans and handles truncated last line in scan.jsonl.
+    Backward-compatible with legacy snapshot.json formats.
+    """
     snapshot_file = run_dir / "snapshot.json"
-    if not snapshot_file.exists():
-        raise FileNotFoundError(f"Snapshot file not found: {snapshot_file}")
-    return json.loads(snapshot_file.read_text(encoding="utf-8"))
+    jsonl_file = run_dir / "scan.jsonl"
+
+    data = None
+    if snapshot_file.exists():
+        try:
+            data = json.loads(snapshot_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = None
+
+    if data is None:
+        if not jsonl_file.exists():
+            raise FileNotFoundError(f"No scan data found in {run_dir}")
+        data = {
+            "run_id": run_dir.name,
+            "timestamp": datetime.now().isoformat(),
+            "status": "incomplete",
+            "incomplete": True,
+            "subdomains": [],
+            "hosts": [],
+        }
+
+    # Ensure status keys exist (legacy snapshots without status are complete)
+    if "status" not in data:
+        data["status"] = "complete"
+        data["incomplete"] = False
+    elif "incomplete" not in data:
+        data["incomplete"] = (data.get("status") == "incomplete")
+
+    # If scan was incomplete or jsonl exists, parse incremental records handling truncated lines
+    if jsonl_file.exists():
+        jsonl_subs = set()
+        jsonl_hosts = []
+        try:
+            with open(jsonl_file, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        record = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        # Handle truncated last line from abrupt exit / crash
+                        continue
+                    rec_type = record.get("type")
+                    if rec_type == "subdomain":
+                        sub = record.get("subdomain") or record.get("data")
+                        if sub:
+                            jsonl_subs.add(sub)
+                    elif rec_type == "host":
+                        h = record.get("host") or record.get("data")
+                        if h:
+                            jsonl_hosts.append(h)
+        except OSError:
+            pass
+
+        # If data has empty subdomains/hosts (e.g. from an incomplete run), populate from jsonl
+        if data.get("incomplete"):
+            if jsonl_subs and not data.get("subdomains"):
+                data["subdomains"] = sorted(jsonl_subs)
+            if jsonl_hosts and not data.get("hosts"):
+                data["hosts"] = jsonl_hosts
+
+    return data

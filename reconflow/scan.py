@@ -176,6 +176,7 @@ def probe_hosts(
     json_report=False,
     httpx_bin=None,
     scope_data=None,
+    run_dir=None,
 ):
     """Probe subdomains for live HTTP/HTTPS services using httpx."""
     bin_name = httpx_bin or resolve_httpx_binary() or "httpx"
@@ -199,76 +200,95 @@ def probe_hosts(
     lines = []
     hosts_data = []
     error_lines = []
-    with subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    ) as proc:
-        for line in proc.stdout:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if json_report:
-                try:
-                    data = json.loads(stripped)
-                    url = data.get("url") or ""
-                    final_url = data.get("final_url") or data.get("location")
 
-                    if scope_data:
-                        from . import scope
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text("", encoding="utf-8")
 
-                        if not scope.is_in_scope(url, scope_data):
-                            print(f"[*] [scope] Skipped out-of-scope probed host: {url}")
-                            continue
+    with open(out_file, "a", encoding="utf-8") as live_fh:
+        with subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        ) as proc:
+            for line in proc.stdout:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if json_report:
+                    try:
+                        data = json.loads(stripped)
+                        url = data.get("url") or ""
+                        final_url = data.get("final_url") or data.get("location")
 
-                        if final_url and not scope.is_in_scope(final_url, scope_data):
-                            print(
-                                f"[*] [scope] Redirect target out of scope: "
-                                f"{final_url} (from {url})"
-                            )
-                            data["redirect_out_of_scope"] = final_url
-                            if data.get("url") == final_url:
-                                data["url"] = url
+                        if scope_data:
+                            from . import scope
 
-                    code = data.get("status_code", data.get("status-code", 0))
-                    title = data.get("title", "")
-                    tech = data.get("tech") or data.get("technologies") or []
-                    entry = {
-                        "url": url,
-                        "status_code": code,
-                        "title": title,
-                        "technologies": tech,
-                    }
-                    if "redirect_out_of_scope" in data:
-                        entry["redirect_out_of_scope"] = data["redirect_out_of_scope"]
-                    hosts_data.append(entry)
-                    display = f"{url} [{code}]"
-                    if title:
-                        display += f" [{title}]"
-                    if tech:
-                        tech_str = ", ".join(tech) if isinstance(tech, list) else tech
-                        display += f" [{tech_str}]"
-                    lines.append(display)
-                    print(f"[*] [{len(lines)} alive] {display}")
-                except json.JSONDecodeError:
-                    error_lines.append(stripped)
-            else:
-                if stripped.startswith("http://") or stripped.startswith("https://"):
-                    if scope_data:
-                        from . import scope
+                            if not scope.is_in_scope(url, scope_data):
+                                print(f"[*] [scope] Skipped out-of-scope probed host: {url}")
+                                continue
 
-                        if not scope.is_in_scope(stripped, scope_data):
-                            print(f"[*] [scope] Skipped out-of-scope probed host: {stripped}")
-                            continue
-                    lines.append(stripped)
-                    print(f"[*] [{len(lines)} alive] {stripped}")
+                            if final_url and not scope.is_in_scope(final_url, scope_data):
+                                print(
+                                    f"[*] [scope] Redirect target out of scope: "
+                                    f"{final_url} (from {url})"
+                                )
+                                data["redirect_out_of_scope"] = final_url
+                                if data.get("url") == final_url:
+                                    data["url"] = url
+
+                        code = data.get("status_code", data.get("status-code", 0))
+                        title = data.get("title", "")
+                        tech = data.get("tech") or data.get("technologies") or []
+                        entry = {
+                            "url": url,
+                            "status_code": code,
+                            "title": title,
+                            "technologies": tech,
+                        }
+                        if "redirect_out_of_scope" in data:
+                            entry["redirect_out_of_scope"] = data["redirect_out_of_scope"]
+                        hosts_data.append(entry)
+                        display = f"{url} [{code}]"
+                        if title:
+                            display += f" [{title}]"
+                        if tech:
+                            tech_str = ", ".join(tech) if isinstance(tech, list) else tech
+                            display += f" [{tech_str}]"
+                        lines.append(display)
+                        live_fh.write(display + "\n")
+                        live_fh.flush()
+
+                        if run_dir:
+                            from . import history
+
+                            history.record_host(run_dir, entry)
+
+                        print(f"[*] [{len(lines)} alive] {display}")
+                    except json.JSONDecodeError:
+                        error_lines.append(stripped)
                 else:
-                    error_lines.append(stripped)
-        proc.wait()
+                    if stripped.startswith("http://") or stripped.startswith("https://"):
+                        if scope_data:
+                            from . import scope
+
+                            if not scope.is_in_scope(stripped, scope_data):
+                                print(f"[*] [scope] Skipped out-of-scope probed host: {stripped}")
+                                continue
+                        lines.append(stripped)
+                        live_fh.write(stripped + "\n")
+                        live_fh.flush()
+                        if run_dir:
+                            from . import history
+
+                            history.record_host(run_dir, {"url": stripped})
+                        print(f"[*] [{len(lines)} alive] {stripped}")
+                    else:
+                        error_lines.append(stripped)
+            proc.wait()
 
     if proc.returncode != 0:
         if error_lines:
@@ -277,7 +297,6 @@ def probe_hosts(
         elif not lines:
             print(f"[!] httpx probing failed (exit code {proc.returncode})")
 
-    out_file.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     print(f"[+] Probing complete: {len(lines)} hosts are alive")
     return lines, (hosts_data if json_report else None)
 
@@ -396,6 +415,10 @@ def run(args):
     out_dir = Path(output_dir) / domain
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    from . import history
+
+    run_id, run_dir = history.init_run(out_dir, domain=domain)
+
     try:
         subs = find_subdomains(domain, out_dir / "subdomains.txt")
 
@@ -412,6 +435,9 @@ def run(args):
             (out_dir / "subdomains.txt").write_text(
                 "\n".join(subs) + ("\n" if subs else ""), encoding="utf-8"
             )
+
+        for s in subs:
+            history.record_subdomain(run_dir, s)
 
         screenshots = []
         if not subs:
@@ -453,6 +479,7 @@ def run(args):
                     json_report=True,
                     httpx_bin=httpx_bin,
                     scope_data=scope_data,
+                    run_dir=run_dir,
                 )
                 if screenshots_enabled and live:
                     screenshots = capture_screenshots(
@@ -470,9 +497,7 @@ def run(args):
             screenshots=screenshots,
         )
 
-        from . import history
-
-        run_id = history.save_snapshot(out_dir, subs, hosts_data or [])
+        history.finalize_run(run_dir, subs, hosts_data or [], domain=domain)
         print(f"[+] Saved scan snapshot ({run_id})")
 
         return {

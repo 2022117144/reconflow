@@ -171,7 +171,7 @@ runs/<run_id>/      snapshot of each scan, used by diff
 - [x] `reconflow scope`: check targets against program scope
 - [ ] `reconflow report`: regenerate reports from saved scans
 - [ ] `--notify`: Discord/Slack webhook alerts for diff results
-- [ ] Save results as they come in
+- [x] Save results as they come in
 
 ## Contributing
 
