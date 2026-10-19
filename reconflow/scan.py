@@ -132,12 +132,27 @@ def detect_wildcard(domain, min_samples=5, max_samples=20, stable_rounds=3, reso
     return ips
 
 
-def filter_wildcard(subs, wildcard_ips, resolve_fn=None):
-    """Drop subdomains whose IPs all fall inside the wildcard IP set."""
+def filter_wildcard(subs, wildcard_ips, resolve_fn=None, scope_data=None):
+    """Drop subdomains whose IPs all fall inside wildcard IPs or resolve out of scope."""
     _resolve = resolve_fn or resolve
     with ThreadPoolExecutor(max_workers=RESOLVE_THREADS) as pool:
         resolved = list(pool.map(_resolve, subs))
-    kept = [s for s, ips in zip(subs, resolved) if ips and not ips <= wildcard_ips]
+    kept = []
+    for s, ips in zip(subs, resolved):
+        if not ips or ips <= wildcard_ips:
+            continue
+        if scope_data:
+            from . import scope
+
+            out_ip = False
+            for ip_str in ips:
+                if not scope.is_in_scope(s, scope_data, resolved_ip=ip_str):
+                    out_ip = True
+                    break
+            if out_ip:
+                print(f"[*] [scope] Skipped host resolving to out-of-scope IP: {s} ({ips})")
+                continue
+        kept.append(s)
     return kept
 
 
@@ -160,6 +175,7 @@ def probe_hosts(
     timeout=None,
     json_report=False,
     httpx_bin=None,
+    scope_data=None,
 ):
     """Probe subdomains for live HTTP/HTTPS services using httpx."""
     bin_name = httpx_bin or resolve_httpx_binary() or "httpx"
@@ -200,15 +216,36 @@ def probe_hosts(
                 try:
                     data = json.loads(stripped)
                     url = data.get("url") or ""
+                    final_url = data.get("final_url") or data.get("location")
+
+                    if scope_data:
+                        from . import scope
+
+                        if not scope.is_in_scope(url, scope_data):
+                            print(f"[*] [scope] Skipped out-of-scope probed host: {url}")
+                            continue
+
+                        if final_url and not scope.is_in_scope(final_url, scope_data):
+                            print(
+                                f"[*] [scope] Redirect target out of scope: "
+                                f"{final_url} (from {url})"
+                            )
+                            data["redirect_out_of_scope"] = final_url
+                            if data.get("url") == final_url:
+                                data["url"] = url
+
                     code = data.get("status_code", data.get("status-code", 0))
                     title = data.get("title", "")
                     tech = data.get("tech") or data.get("technologies") or []
-                    hosts_data.append({
+                    entry = {
                         "url": url,
                         "status_code": code,
                         "title": title,
                         "technologies": tech,
-                    })
+                    }
+                    if "redirect_out_of_scope" in data:
+                        entry["redirect_out_of_scope"] = data["redirect_out_of_scope"]
+                    hosts_data.append(entry)
                     display = f"{url} [{code}]"
                     if title:
                         display += f" [{title}]"
@@ -221,6 +258,12 @@ def probe_hosts(
                     error_lines.append(stripped)
             else:
                 if stripped.startswith("http://") or stripped.startswith("https://"):
+                    if scope_data:
+                        from . import scope
+
+                        if not scope.is_in_scope(stripped, scope_data):
+                            print(f"[*] [scope] Skipped out-of-scope probed host: {stripped}")
+                            continue
                     lines.append(stripped)
                     print(f"[*] [{len(lines)} alive] {stripped}")
                 else:
@@ -239,10 +282,14 @@ def probe_hosts(
     return lines, (hosts_data if json_report else None)
 
 
-def capture_screenshots(live_hosts, screenshots_dir):
+def capture_screenshots(live_hosts, screenshots_dir, scope_data=None):
     """Capture screenshots of live hosts using gowitness."""
     screenshots_dir.mkdir(parents=True, exist_ok=True)
     urls = [line.split()[0] for line in live_hosts if line.strip()]
+    if scope_data:
+        from . import scope
+
+        urls = [u for u in urls if scope.is_in_scope(u, scope_data)]
     if not urls:
         return []
     print("[*] Capturing screenshots of live hosts with gowitness...")
@@ -331,6 +378,15 @@ def run(args):
     keep_wildcard = getattr(args, "keep_wildcard", False)
     json_report = bool(getattr(args, "json_report", False) or getattr(args, "json", False))
     screenshots_enabled = getattr(args, "screenshots", False)
+    scope_file = getattr(args, "scope", None)
+    scope_data = None
+    if scope_file and isinstance(scope_file, (str, Path)):
+        from . import scope
+
+        try:
+            scope_data = scope.load_scope(scope_file)
+        except scope.ScopeError as e:
+            sys.exit(f"Error: {e}")
 
     required_tools = ["subfinder", "httpx"]
     if screenshots_enabled:
@@ -343,39 +399,65 @@ def run(args):
     try:
         subs = find_subdomains(domain, out_dir / "subdomains.txt")
 
-        wildcard_ips = detect_wildcard(domain)
-        dropped = 0
-        if wildcard_ips:
-            ips_str = ", ".join(sorted(wildcard_ips))
-            print(f"[!] Wildcard DNS detected: random names resolve to {ips_str}")
-            if keep_wildcard:
-                print("[!] --keep-wildcard set, results will not be filtered")
-            else:
-                kept = filter_wildcard(subs, wildcard_ips)
-                dropped = len(subs) - len(kept)
-                print(f"[*] Filtered out {dropped} wildcard-only subdomains, {len(kept)} remain")
-                subs = kept
-                (out_dir / "subdomains.txt").write_text(
-                    "\n".join(subs) + ("\n" if subs else ""), encoding="utf-8"
-                )
+        if scope_data:
+            from . import scope
+
+            in_scope_subs = []
+            for s in subs:
+                if scope.is_in_scope(s, scope_data):
+                    in_scope_subs.append(s)
+                else:
+                    print(f"[*] [scope] Skipped out-of-scope host: {s}")
+            subs = in_scope_subs
+            (out_dir / "subdomains.txt").write_text(
+                "\n".join(subs) + ("\n" if subs else ""), encoding="utf-8"
+            )
 
         screenshots = []
         if not subs:
-            print("[!] No subdomains left to probe.")
+            print("[!] No in-scope subdomains left to probe.")
             live = []
             hosts_data = []
+            wildcard_ips = set()
+            dropped = 0
         else:
-            httpx_bin = resolve_httpx_binary() or "httpx"
-            live, hosts_data = probe_hosts(
-                out_dir / "subdomains.txt",
-                out_dir / "live.txt",
-                threads=threads,
-                timeout=timeout,
-                json_report=True,
-                httpx_bin=httpx_bin,
-            )
-            if screenshots_enabled and live:
-                screenshots = capture_screenshots(live, out_dir / "screenshots")
+            wildcard_ips = detect_wildcard(domain)
+            dropped = 0
+            if wildcard_ips:
+                ips_str = ", ".join(sorted(wildcard_ips))
+                print(f"[!] Wildcard DNS detected: random names resolve to {ips_str}")
+                if keep_wildcard:
+                    print("[!] --keep-wildcard set, results will not be filtered")
+                else:
+                    kept = filter_wildcard(subs, wildcard_ips, scope_data=scope_data)
+                    dropped = len(subs) - len(kept)
+                    print(
+                        f"[*] Filtered out {dropped} wildcard-only subdomains, {len(kept)} remain"
+                    )
+                    subs = kept
+                    (out_dir / "subdomains.txt").write_text(
+                        "\n".join(subs) + ("\n" if subs else ""), encoding="utf-8"
+                    )
+
+            if not subs:
+                print("[!] No subdomains left to probe.")
+                live = []
+                hosts_data = []
+            else:
+                httpx_bin = resolve_httpx_binary() or "httpx"
+                live, hosts_data = probe_hosts(
+                    out_dir / "subdomains.txt",
+                    out_dir / "live.txt",
+                    threads=threads,
+                    timeout=timeout,
+                    json_report=True,
+                    httpx_bin=httpx_bin,
+                    scope_data=scope_data,
+                )
+                if screenshots_enabled and live:
+                    screenshots = capture_screenshots(
+                        live, out_dir / "screenshots", scope_data=scope_data
+                    )
 
         write_report(
             domain,
@@ -439,6 +521,11 @@ def main():
         "--screenshots",
         action="store_true",
         help="capture screenshots of live hosts using gowitness",
+    )
+    parser.add_argument(
+        "--scope",
+        default=None,
+        help="path to scope file (enforces strict scope boundaries)",
     )
     args = parser.parse_args()
     run(args)

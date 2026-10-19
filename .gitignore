@@ -1,6 +1,18 @@
 # Scan results - never commit these
 output/
 
+# Scope files and targets
+scope.txt
+*.scope
+*.scope.txt
+targets.txt
+
+# Webhooks and secrets
+.env
+webhook.txt
+webhook.json
+*.secret
+
 # Python
 __pycache__/
 *.pyc

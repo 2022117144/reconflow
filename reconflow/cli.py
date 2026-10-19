@@ -68,6 +68,11 @@ def build_parser():
         action="store_true",
         help="Capture screenshots of live hosts using gowitness",
     )
+    p_scan.add_argument(
+        "--scope",
+        default=None,
+        help="Path to scope file (enforces strict scope boundaries)",
+    )
 
     # diff subcommand
     p_diff = subparsers.add_parser(
@@ -95,6 +100,22 @@ def build_parser():
         help="Output diff comparison as JSON",
     )
 
+    # scope subcommand
+    p_scope = subparsers.add_parser(
+        "scope",
+        help="Check targets against program scope",
+        description="Verify whether target hosts, IPs, or CIDRs are IN or OUT of scope.",
+    )
+    p_scope.add_argument(
+        "scope_file",
+        help="Path to scope file",
+    )
+    p_scope.add_argument(
+        "targets",
+        nargs="+",
+        help="One or more target hostnames, URLs, or IPs to check",
+    )
+
     return parser
 
 
@@ -109,6 +130,10 @@ def main(args=None):
         from . import diff
 
         diff.run(parsed_args)
+    elif parsed_args.command == "scope":
+        from . import scope
+
+        scope.run(parsed_args)
     else:
         parser.print_help()
         sys.exit(0)

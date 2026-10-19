@@ -55,7 +55,9 @@ pip install -e .
 
 ```
 reconflow scan example.com
+reconflow scan example.com --scope scope.txt
 reconflow diff example.com
+reconflow scope scope.txt api.example.com notexample.com
 ```
 
 You can also run it as a module: `python -m reconflow scan example.com`
@@ -71,6 +73,24 @@ You can also run it as a module: `python -m reconflow scan example.com`
 | `--keep-wildcard` | Warn about wildcard DNS but don't filter wildcard results |
 | `--json` | Also write structured results to `report.json` |
 | `--screenshots` | Capture screenshots of live hosts (requires gowitness) |
+| `--scope` | Path to scope file (drops out-of-scope hosts before network activity) |
+
+### `scope`
+
+Verify whether targets are in or out of scope based on a program scope file:
+
+```bash
+reconflow scope scope.txt api.example.com admin.example.com 192.168.1.10
+```
+
+#### Scope file format & matching rules
+- One entry per line; blank lines and `#` comments are ignored.
+- **In-scope entries**: exact domains (`example.com`), wildcards (`*.example.com`), and IP/CIDR blocks (`192.168.1.0/24`).
+- **Out-of-scope entries**: prefixed with `!`, `-`, or `out:` (e.g. `!admin.example.com`, `!10.0.0.0/8`).
+- **Out-of-scope entries ALWAYS override in-scope entries**.
+- **Wildcard matching**: `*.example.com` matches subdomains only (e.g. `api.example.com`, `dev.api.example.com`). It does **NOT** match the apex domain `example.com` itself and does **NOT** match `notexample.com`. The apex domain must be listed explicitly if in scope.
+- **Normalization**: Hostnames are normalized first (lowercased; schemes, credentials, ports, paths, and trailing dots are stripped).
+- **Fail closed**: If `--scope` is given and the file is missing, unreadable, empty, or contains no valid in-scope entries, reconflow aborts immediately. Out-of-scope hosts and redirect targets are never probed.
 
 ### `diff`
 
@@ -148,7 +168,7 @@ runs/<run_id>/      snapshot of each scan, used by diff
 - [x] JSON report output
 - [x] Screenshots of live hosts
 - [x] Scan history and `reconflow diff`
-- [ ] `reconflow scope`: check targets against program scope
+- [x] `reconflow scope`: check targets against program scope
 - [ ] `reconflow report`: regenerate reports from saved scans
 - [ ] `--notify`: Discord/Slack webhook alerts for diff results
 - [ ] Save results as they come in
