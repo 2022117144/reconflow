@@ -244,6 +244,16 @@ def run(args):
         diff_result["gone_live"],
     ])
 
+    notify_enabled = bool(getattr(args, "notify", False))
+    webhook_url_arg = getattr(args, "webhook_url", None)
+
+    output_text = format_diff(
+        diff_result,
+        old_data.get("run_id", old_run.name),
+        new_data.get("run_id", new_run.name),
+        new_data=new_data,
+    )
+
     if json_output:
         payload = {
             "domain": domain,
@@ -254,12 +264,20 @@ def run(args):
         }
         print(json.dumps(payload, indent=2))
     else:
-        output_text = format_diff(
-            diff_result,
-            old_data.get("run_id", old_run.name),
-            new_data.get("run_id", new_run.name),
-            new_data=new_data,
-        )
         print(output_text)
+
+    if notify_enabled:
+        if has_changes:
+            from . import notify
+
+            url = notify.resolve_webhook_url(webhook_url_arg)
+            if not url:
+                print(
+                    "[!] --notify requested, but no webhook URL found in "
+                    "RECONFLOW_WEBHOOK_URL or --webhook-url.",
+                    file=sys.stderr,
+                )
+            else:
+                notify.send_webhook(url, output_text)
 
     sys.exit(1 if has_changes else 0)

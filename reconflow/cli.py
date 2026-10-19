@@ -99,6 +99,16 @@ def build_parser():
         dest="json_report",
         help="Output diff comparison as JSON",
     )
+    p_diff.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send diff notifications to Slack or Discord webhook",
+    )
+    p_diff.add_argument(
+        "--webhook-url",
+        default=None,
+        help="Webhook URL (or set RECONFLOW_WEBHOOK_URL / DISCORD_WEBHOOK_URL / SLACK_WEBHOOK_URL)",
+    )
 
     # scope subcommand
     p_scope = subparsers.add_parser(
