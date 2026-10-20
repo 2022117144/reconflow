@@ -2,13 +2,13 @@
 
 [![PyPI](https://img.shields.io/pypi/v/reconflow)](https://pypi.org/project/reconflow/)
 
-Recon for bug bounty hunters that tells you **what changed** since your last scan.
+Reconnaissance tool for bug bounty hunters that tracks **what changed** between scans. Chains [subfinder](https://github.com/projectdiscovery/subfinder) and [httpx](https://github.com/projectdiscovery/httpx) into a single automated pipeline, detects and filters out wildcard DNS noise, snapshots every target run, and highlights new subdomains, newly live hosts, and status changes with actionable lead hints.
 
 ```bash
 pip install reconflow
+reconflow scan example.com
+reconflow diff example.com
 ```
-
-`reconflow` chains [subfinder](https://github.com/projectdiscovery/subfinder) and [httpx](https://github.com/projectdiscovery/httpx) into one command, filters out wildcard DNS noise, saves a snapshot of every run, and lets you `diff` any two runs to see new subdomains, newly live hosts, and changed responses.
 
 > **Use responsibly.** Only scan domains you own or that are explicitly in scope for a bug bounty / pentest program you are authorized to test.
 
@@ -24,9 +24,16 @@ pip install reconflow
 
 - Python 3.8+
 - [`subfinder`](https://github.com/projectdiscovery/subfinder/releases) and [`httpx`](https://github.com/projectdiscovery/httpx/releases) (ProjectDiscovery's Go versions) on your `PATH`
-- [`gowitness`](https://github.com/sensepost/gowitness/releases) (optional, only for `--screenshots`)
+- [`gowitness`](https://github.com/sensepost/gowitness/releases) (optional, only for `--screenshots`; **gowitness v3+ required**, as v2 legacy flags do not support `gowitness scan file`)
 
 > **Note:** `httpx` must be ProjectDiscovery's tool, not the Python `httpx` library. On Kali/Debian/Ubuntu it is often packaged as `httpx-toolkit`. reconflow checks for both names and verifies the binary.
+
+Install Go tools directly with `go install`:
+
+```bash
+go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+```
 
 Check your tools:
 
@@ -45,7 +52,7 @@ pip install reconflow
 
 From source:
 
-```
+```bash
 git clone https://github.com/ErenYeager1836/reconflow.git
 cd reconflow
 pip install -e .
@@ -161,7 +168,8 @@ reconflow report example.com --json
 
 Most recon tools tell you what exists. reconflow also tells you what changed. New subdomains, newly live hosts, and status transitions are annotated with actionable **lead hints** ("worth checking"):
 
-Example output (illustrative):
+> **Illustrative example output** (simulated demonstration, not from a real scan):
+<!-- TODO: Replace illustrative sample diff output below with real output from an authorized scan run -->
 
 ```
 [*] Recon diff: 2026-10-18_185218 -> 2026-10-18_190412
